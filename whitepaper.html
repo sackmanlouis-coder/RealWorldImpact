@@ -23,7 +23,7 @@
     --serif:'Newsreader',Georgia,'Times New Roman',serif;
   }
   *{margin:0;padding:0;box-sizing:border-box}
-  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  html{scroll-behavior:smooth;scroll-padding-top:64px;-webkit-text-size-adjust:100%;text-size-adjust:100%}
   body{
     background:var(--lime);
     color:var(--ink);
@@ -39,7 +39,7 @@
   .wrap{max-width:780px;margin:0 auto;padding:0 clamp(28px,8vw,56px)}
 
   /* ---------- top strip ---------- */
-  header{border-bottom:1px solid var(--rule-strong)}
+  header{border-bottom:1px solid var(--rule-strong);position:sticky;top:0;background:var(--lime);z-index:100}
   .strip{
     display:flex;justify-content:space-between;align-items:center;
     flex-wrap:wrap;gap:6px 16px;padding:14px 0;
@@ -118,7 +118,7 @@
   }
   .ledger-table .totals .name{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase}
 
-  /* ---------- inverted appendix band ---------- */
+  /* ---------- inverted references band ---------- */
   .appendix{background:var(--ink);color:var(--lime)}
   .appendix ::selection{background:var(--lime);color:var(--ink)}
   .appendix .eyebrow{color:var(--lime)}
@@ -181,7 +181,7 @@
     .ledger-table .row .name{font-size:15px;line-height:1.35}
     .ledger-table .totals{padding:14px 0}
 
-    /* Appendix — the 160px key column was crushing values on narrow screens.
+    /* References — the 160px key column was crushing values on narrow screens.
        Stack key on top of value so addresses and links get the full row width. */
     .appendix .row{grid-template-columns:1fr;gap:6px;padding:14px 0}
     .appendix .row .k{padding-top:0}
@@ -215,10 +215,10 @@
 <header>
   <div class="wrap">
     <div class="strip">
-      <span>Real World Impact · Whitepaper</span>
+      <a href="#" onclick="event.preventDefault();window.scrollTo({top:0,behavior:'smooth'})">Real World Impact · Whitepaper</a>
       <div class="links">
         <a href="https://rwihood.org/">rwihood.org</a>
-        <a href="#appendix">Appendix</a>
+        <a href="#references">References</a>
       </div>
     </div>
   </div>
@@ -389,10 +389,10 @@
   </div>
 </section>
 
-<!-- ================= APPENDIX ================= -->
-<section id="appendix" class="appendix">
+<!-- ================= REFERENCES ================= -->
+<section id="references" class="appendix">
   <div class="wrap sec-inner">
-    <p class="eyebrow">Appendix — Addresses &amp; references</p>
+    <p class="eyebrow">References — Addresses &amp; links</p>
     <h2>Everything, verifiable.</h2>
 
     <div class="row"><div class="k">Token contract</div><div class="v">0x2286397228be256529BE1ae9ed8D7d16549e9C6A</div></div>
@@ -406,6 +406,7 @@
     <div class="row"><div class="k">Donation platform</div><div class="v"><a href="https://thegivingblock.com/">The Giving Block</a></div></div>
     <div class="row"><div class="k">Founder</div><div class="v"><a href="https://x.com/Burgers_Louis">@Burgers_Louis</a> · <a href="https://x.com/BurgersOnBase">@BurgersOnBase</a> · burgersonbase.base.eth</div></div>
     <div class="row"><div class="k">Project X account</div><div class="v"><a href="https://x.com/RWIrobinhood">@RWIrobinhood</a></div></div>
+    <div class="row"><div class="k">Project Instagram</div><div class="v"><a href="https://www.instagram.com/rwihood/">@rwihood</a></div></div>
   </div>
 </section>
 
