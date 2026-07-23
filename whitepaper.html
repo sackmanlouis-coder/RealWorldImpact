@@ -206,7 +206,10 @@
 
     /* Footer — smaller, tighter */
     footer{padding:26px 0;font-size:10.5px;gap:8px 16px}
-    /* Header — match index.html mobile header dimensions so heights are consistent across pages */
+  }
+  /* Header mobile rules use index.html's 560px breakpoint (not 640) so the two pages'
+     headers switch to compact mode at the exact same width — no jump when swapping pages. */
+  @media (max-width: 560px){
     header .strip{flex-wrap:nowrap;gap:12px;padding-top:16px;padding-bottom:16px;font-size:10.5px;letter-spacing:.05em}
     header .strip>:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     header .links{flex:none;flex-wrap:nowrap;gap:13px}
@@ -478,7 +481,12 @@
     async function update(){
       try{
         let pair = await getPair(PAIR).catch(()=>null);
-        if(!pair) pair = await getPair(TOKEN);
+        if(!pair){
+          const r = await fetch(TOKEN); const j = await r.json();
+          const ps = (j.pairs||[]).filter(p=>p.chainId==='robinhood'&&p.priceUsd&&p.baseToken&&p.baseToken.address&&p.baseToken.address.toLowerCase()==='0x2286397228be256529be1ae9ed8d7d16549e9c6a');
+          ps.sort((a,b)=>((b.liquidity&&b.liquidity.usd)||0)-((a.liquidity&&a.liquidity.usd)||0));
+          pair = ps[0]||null;
+        }
         if(!pair) return;
         const price = fmtPrice(pair.priceUsd);
         if(!price) return;
