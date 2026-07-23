@@ -843,6 +843,16 @@
       shadow.querySelectorAll('.wp-brand, .wp-ticker').forEach(el => {
         el.addEventListener('click', backHandler);
       });
+      // Anchor links can't resolve IDs inside a shadow root from the URL hash,
+      // so intercept the References link and scroll the shadow section into view.
+      const refsLink = shadow.querySelector('a[href="#references"]');
+      if(refsLink){
+        refsLink.addEventListener('click', e=>{
+          e.preventDefault();
+          const target = shadow.getElementById('references');
+          if(target) target.scrollIntoView({behavior:'smooth'});
+        });
+      }
       // Register the whitepaper's ticker into the site's ticker Set so it updates from the same poll.
       const shadowTick = shadow.getElementById ? shadow.getElementById('ticker') : shadow.querySelector('#ticker');
       if(shadowTick && typeof tickerElements !== 'undefined'){
