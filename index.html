@@ -75,6 +75,7 @@
     header .strip>:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     header .links{flex:none;flex-wrap:nowrap;gap:13px}
     #ticker .sep{display:none}
+    .wp-brand{display:none}
   }
   @media (max-width:400px){
     header .strip{font-size:9.5px;letter-spacing:.02em}
@@ -82,6 +83,8 @@
   }
   #ticker{opacity:0;transition:opacity .4s;margin-left:10px}
   #ticker.on{opacity:1}
+  .wp-left{display:flex;align-items:center;gap:16px;min-width:0}
+  .wp-brand{white-space:nowrap}
 
   /* ---------- hero: the logo dissolves into the page ---------- */
   .hero{padding:3vh 0 4vh;text-align:center}
@@ -272,7 +275,10 @@
 
 <header>
   <div class="wrap strip">
-    <a href="#" onclick="event.preventDefault();window.scrollTo({top:0,behavior:'smooth'})">$RWI&nbsp;<span id="ticker" aria-live="polite"></span></a>
+    <div class="wp-left">
+      <a class="wp-brand" href="#" onclick="event.preventDefault();window.scrollTo({top:0,behavior:'smooth'})">Real World Impact</a>
+      <span>$RWI&nbsp;<span id="ticker" aria-live="polite"></span></span>
+    </div>
     <nav class="links" aria-label="Primary">
       <a href="#whitepaper" id="paperLink">Whitepaper</a>
       <a href="https://dexscreener.com/robinhood/0xff6aa24815d1274a9be0cfd17c7c7489cd40a697" target="_blank" rel="noopener">Dexscreener</a>
