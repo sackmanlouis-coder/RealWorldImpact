@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#CCFE06">
+<title>Real World Impact · Whitepaper</title>
+<meta name="description" content="Real World Impact ($RWI) whitepaper — a charity coin on Robinhood Chain. Onchain in, real world out.">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Real World Impact · Whitepaper">
+<meta property="og:description" content="A charity coin on Robinhood Chain. Onchain in, real world out.">
+<meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+  :root{
+    --lime:#CCFE06;
+    --ink:#0B0B09;
+    --rule:rgba(11,11,9,.28);
+    --rule-strong:rgba(11,11,9,.85);
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --serif:'Newsreader',Georgia,'Times New Roman',serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  body{
+    background:var(--lime);
+    color:var(--ink);
+    font-family:var(--serif);
+    font-size:18px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:clip;
+  }
+  ::selection{background:var(--ink);color:var(--lime)}
+  a{color:inherit}
+
+  .wrap{max-width:780px;margin:0 auto;padding:0 clamp(28px,6vw,56px)}
+
+  /* ---------- top strip ---------- */
+  header{border-bottom:1px solid var(--rule-strong)}
+  .strip{
+    display:flex;justify-content:space-between;align-items:center;
+    flex-wrap:wrap;gap:6px 16px;padding:14px 0;
+    font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  }
+  .strip a{text-decoration:none;border-bottom:1px solid transparent}
+  .strip a:hover{border-bottom-color:var(--ink)}
+  .strip .links{display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:flex-end}
+
+  /* ---------- cover ---------- */
+  .cover{padding:12vh 0 10vh;text-align:left;border-bottom:1px solid var(--rule-strong)}
+  .cover .doc-meta{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+    display:flex;flex-wrap:wrap;gap:8px 24px;margin-bottom:64px;
+  }
+  .cover h1{
+    font-size:clamp(3rem,8vw,5.4rem);
+    font-weight:500;line-height:1;letter-spacing:-.02em;
+    margin-bottom:22px;
+  }
+  .cover h1 em{font-style:italic;font-weight:400}
+  .cover .sub{
+    font-size:clamp(1.15rem,2.6vw,1.5rem);font-weight:400;line-height:1.35;
+    max-width:32ch;margin-bottom:56px;
+  }
+  .cover .fact-grid{
+    display:grid;grid-template-columns:repeat(2,1fr);
+    gap:20px 40px;border-top:1px solid var(--rule-strong);padding-top:24px;
+    font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  }
+  @media (max-width:520px){.cover .fact-grid{grid-template-columns:1fr}}
+  .fact-grid .k{opacity:.65;display:block;margin-bottom:4px;font-size:10.5px;letter-spacing:.14em}
+  .fact-grid .v{word-break:break-all;font-size:11.5px}
+
+  /* ---------- sections ---------- */
+  section{border-top:1px solid var(--rule-strong)}
+  section:first-of-type{border-top:0}
+  .sec-inner{padding:64px 0}
+  .eyebrow{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;
+    margin-bottom:20px;
+  }
+  h2{font-size:clamp(1.9rem,4.5vw,2.7rem);font-weight:500;letter-spacing:-.012em;line-height:1.1;max-width:20ch;margin-bottom:28px}
+  h3{
+    font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    margin:34px 0 12px;
+  }
+  p{max-width:62ch;margin-top:14px}
+  p:first-of-type{margin-top:0}
+  p+p{margin-top:14px}
+
+  /* ---------- data blocks / equation-y bits ---------- */
+  .equation{
+    margin:26px 0;padding:20px 0;
+    border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+    font-family:var(--mono);font-size:13.5px;line-height:1.7;letter-spacing:.02em;
+  }
+  .equation .step{display:flex;gap:14px;align-items:baseline}
+  .equation .step b{opacity:.5;font-weight:400;font-family:var(--mono);font-size:11px;letter-spacing:.14em;min-width:22px}
+
+  /* ---------- ledger table ---------- */
+  .ledger-table{
+    margin-top:26px;border-top:1px solid var(--rule-strong);
+    font-family:var(--mono);font-size:13px;
+  }
+  .ledger-table .row{
+    display:grid;grid-template-columns:1fr auto;gap:16px;
+    padding:14px 0;border-bottom:1px solid var(--rule);
+  }
+  .ledger-table .row.head{border-bottom:1px solid var(--rule-strong);font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.7}
+  .ledger-table .row .name{font-family:var(--serif);font-size:16px}
+  .ledger-table .row.head .name{font-family:var(--mono);font-size:11px}
+  .ledger-table .totals{
+    display:grid;grid-template-columns:1fr auto;gap:16px;
+    padding:16px 0;border-top:1px solid var(--rule-strong);font-weight:500;
+  }
+  .ledger-table .totals .name{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+
+  /* ---------- inverted appendix band ---------- */
+  .appendix{background:var(--ink);color:var(--lime)}
+  .appendix ::selection{background:var(--lime);color:var(--ink)}
+  .appendix .eyebrow{color:var(--lime)}
+  .appendix h2{color:var(--lime)}
+  .appendix .k{color:var(--lime);opacity:.6}
+  .appendix .row{
+    display:grid;grid-template-columns:160px 1fr;gap:16px 24px;
+    padding:16px 0;border-bottom:1px solid rgba(204,254,6,.28);
+    font-family:var(--mono);font-size:13px;
+  }
+  .appendix .row:first-child{border-top:1px solid rgba(204,254,6,.5)}
+  .appendix .row .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;padding-top:2px}
+  .appendix .row .v{word-break:break-all;font-size:12.5px;line-height:1.5}
+  .appendix a{color:var(--lime);text-decoration:none;border-bottom:1px solid rgba(204,254,6,.5)}
+  .appendix a:hover{border-bottom-color:var(--lime)}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--rule-strong);padding:34px 0;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px 24px}
+  footer a{text-decoration:none;border-bottom:1px solid var(--rule)}
+
+  /* ---------- inline addresses & links ---------- */
+  code, .mono{font-family:var(--mono);font-size:.88em;letter-spacing:.01em;word-break:break-all}
+  p a{text-decoration:none;border-bottom:1px solid var(--rule)}
+  p a:hover{border-bottom-color:var(--ink)}
+
+  /* ---------- two-tone cursors: ink on lime, lime on ink ---------- */
+  @media (any-pointer:fine){
+    body{cursor:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAABmJLR0QA/wD/AP+gvaeTAAACkElEQVRIidXUS0hVQRgH8P8355w53q7dNMx2SQsziCi0IAOFCntgBaUZBEVQmGBl0SIq6LEIC4SMQGgTKBVSLURc9KCgQk3uw4wiUwoDRQrJCz7OPefcO1+LXrowr9Yh+u9m+Ob78c3AAP8iQTaLQix3edFbTFoplLLCnQ5XnvcWAvCuk+DEcLrNkg0hhuEZ1POScGCtZgx/RpltGU86GWmeQAAw8AGoWKeZ/b1itWXJYIRTsjyBAODLJ6CySJiRp8iyY4lwmI08TyAAsMaAU7s1o6VepMVdag2zuc0TCABUAqg9IbS6M0Im4twUZrPSE+hH7tURndsnhGNzbYdjXGNO/uyMIAB41kw4skno1iiVt1uyqY3h8wQCgLchwsECTQ4NYiOPy9YuTs30BAKAwT6gvFCYvV20bMxyIkE2czyBAGAkSji+VcjnLbQw4XAwzHrB7+r1mTRftATYc0ypeRlwA+msAung1DSQbmCuUuJBiJGxijA+Kyg9ExgZBuIuEJjP2LKXBZgaIKgHUFEGRRkiSqT6p0KmhfI3My40qPitK0KrryZ6/YLQ102xxTk8kEdOzfR38CtTvtHOCsbFRpWQJh6VHFKO/v0fb7xKKbbNVW8Y8o8gTWNU1ajE4WplCx0laZqzw5fKscLtDAB4fJfg2DQnBlk2E2hSggnzentMctu4MTTxEw268vLNoGn5/T72+318tNrk1lH5atYTEdSoUugWPn1lHrnhn1Pqom5pLsvsFd+mar4hYJhYFmE9f1bQiHBPOj5n+Rqy+ifu51Lsox3D/dIKTqQvAIr3M8fjUKxEcbIQJVsY5pT1rqsegoG4i/c+P18KwL2dTbCT7ZFUmEEhlmcjnLLhrzb+b/MVneAOZxpRg+YAAAAASUVORK5CYII=") 4 2,default}
+    a,button,.btn:hover{cursor:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAB70lEQVR42u2UwWoTURSGv3POMFCyU0FxIbiQoggqNnkBHboQ1/UdRPABuhFaKbgQcS2IRTDZCGJcpPuStmBrF6HVPoAb1yXTzB0Xk5ukSVoKM40u8sPhHi7MnO/+954jDGkrCStJhyUAC1gsW7zJJNVsh41SaSYtlWbSZjtsnHc9Hd5wjmhcPjGASev/B1g/DNNmO2xsJWHlnwBEl4ynDzVKOiydB8yZrmDvu+AckYc5itnoglyd+BvY3xYAns1rlHR4nxdCm+2wcVZrVUEty3/tCs8fZRB5AALniJ7cNoCo1kpG7l8ERGD+sqGW5QBmcLAruWeFqrIG8Oc3PLhgx34mAqJZmGWrGjy+ZpiBBQU8QgtYrLWStYtXso1PbwSRvt291TIIX9jv5QYoW7ypRrXWSuoisP5Neif1xa2bmwcJ+lFIF1SC+F2acuvm/ZSfP+SY3b7wYFEfs3dTRGgV0oYWsPy24eqn2d0r3s1fVt2KKl8KAVBl1btwkt2DoQrOsaBGtRCAOY1jC1h+/dXVTyw64MyNOynAYdnincImoXdh9l46YrfP/XW8+JDf/hEA78Krz25l2G4b7Agrxn6AYMy4XT3qsNdrw+4gUu0PJtUUwPLaPxZgTuO42Q4PPu4k10/7UIR9pppqqqmmKkB/AYB+pE4p9c4WAAAAAElFTkSuQmCC") 5 0,pointer}
+    .appendix{cursor:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAABmJLR0QA/wD/AP+gvaeTAAACeklEQVRIidXUT0gUURwH8O+b2Z15b+bNOrOtSX9ICcqkoD8WFGRBUpf+QKQiRGAXwYrqIEQFkhBGkGAolB466EG6iET/TAgyxINW0KHISxB2KKzWlHVzZ96vQwQWbLKbQ/Q9fnnv93nwHg/4F7Ftc6+Uojp0SEreaUtBMsYvLfZs7fdi3WaCaeKC64luANHQoLWbCLdGVNQrRI0XF49d13VDgQBgxWqg80lgriqlbUxPj3LOi0OBACBeBHQ8UuaW3Sjmgj2zLKs8FAgAhA1cua2iB+rIjURp2LKsg6FAAKDpwNlWpZ9oUYauU7+U1slQoJ+paiDW3KO0SJTaYjHRnsvenCAA2HWI0D6gInaM6l1P9AMQoUAAULaV0DWkjMLl2OclxLCUcmkoEAAsKwG6nipzzUZaHzWD545jloYCAYDjEtruKmPnfirSdDbqOLziT+sjuQx/Nw70tmkqOYnM1CeomSnQTBLMzzCHMQwASABI5QV9+Qg4HhCJAl8/M9zvYRpj1E3ExolYUtMoCVCSMTWRDVkQGnnI0HRM8482Kr3uHLEN2wklZZR++wrvU6nZawsdcn6y3lHfTYaLtVrgz9Fg3w0252d+9LWniRucnQFg/BUUBAzXG7Wg47z2zffZkenp9OHUDEsP3WEAgMpqAhdk2TavyQX6JVLyzgJPkBsXk/M/UccRV8sr+OyYMmhMGdTQzCleKF7mDdm2aI0v4a+FECvn95zzYilF0PvCpDFl0IMJg5yYCIQQO/K1IsjyQLwEv1dVz/3BDwadajGVFxcZKa3L+UJZIyXfEysQfoEr/HiCv7FtfhyAuegQAGZZvMm2eWUYw/+/fAeiob/yhcZVjQAAAABJRU5ErkJggg==") 4 2,default}
+    .appendix a,.appendix button{cursor:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACAklEQVR42u2UPYsTURSGn7mTBAayTNRG7AS/CLh+FFvYT7PabBMXBBt/gFhYCIKNQkpBLAVhG7dVAruJ/oCVFVcQNWhlo4IKugkDS849FpObzO5mdWEmwSIvHO7hwsx57nvPPbBD5XIwF1aCZlgJmuVyMMekFVaC5rot6botaVgJmuOuZ3ZtGKJR+cQAJq3/H+DAwUDH2ZD/BGh9Fx4+t5Ff4O44YPZ1BafOK8YQOZhiibU+yJGJ98DJcwrAg1Ub+QUeZ4UwYSVo7tdaa8FKkh+fVe43EogsAAVjiJ68FYCoVvV33b8qqMLqN8FKkgOIwLFZzTwrjLW0AA4dhhc/ZdvPVEFtEiLJagWefRZEQHo5NKH0uF2r+q0fX5ONxeuK6tDuwSoJhCvs9jIDdDrxSyss16p+QxUuzOvgpK649HNxIL1h5PIKNjfjR55H9f0rjxNndJvdrnC6qIv2hocq77IAeC6ZmQmuGZ+FlS9y0VoG16B2uA7A+nCLp/06wO9f8a3Mc8BalpwLe9mdDmvBGC5bYTmXQdTtxlvS496NS6axZ9FUI3584wHEnU68kdskdC60X3vDwmkXZNj9d66aurU8zXUUOxduLpj6Trsl/SIkH/sBCiPG7VKxwIfBM0w3orrcA/Cz2j8SoNuNt8Ji8OnKWf/o3z5Upc1UU0011VQ56A9N/2Ewn1lofAAAAABJRU5ErkJggg==") 5 0,pointer}
+    /* buttons that invert to ink on hover need the lime hand */
+  }
+
+  /* ---------- print ---------- */
+  @media print{
+    :root{--lime:#fff;--ink:#000;--rule:#bbb;--rule-strong:#000}
+    body{background:#fff;color:#000;font-size:11pt;line-height:1.5}
+    header,footer,.strip{display:none}
+    .wrap{max-width:100%;padding:0 0.6in}
+    .cover{padding:0.4in 0 0.5in;page-break-after:always;border-bottom:0}
+    .cover .doc-meta{margin-bottom:0.6in}
+    section{page-break-inside:avoid;border-top:1px solid #000}
+    .sec-inner{padding:0.35in 0}
+    h2{page-break-after:avoid}
+    .appendix{background:#fff !important;color:#000 !important}
+    .appendix .eyebrow,.appendix h2,.appendix .k,.appendix a{color:#000 !important}
+    .appendix .row{border-bottom-color:#bbb !important}
+    a{color:inherit;border-bottom:0 !important;text-decoration:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="strip">
+      <span>Real World Impact · Whitepaper</span>
+      <div class="links">
+        <a href="https://rwihood.org/">rwihood.org</a>
+        <a href="#appendix">Appendix</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= COVER ================= -->
+<section class="cover">
+  <div class="wrap">
+    <div class="doc-meta">
+      <span>July 2026</span>
+      <span>Robinhood Chain · ID 4663</span>
+    </div>
+    <h1>Real World<br><em>Impact.</em></h1>
+    <p class="sub">A charity coin on Robinhood Chain. Onchain in, real world out. Every donation published, every receipt verifiable.</p>
+    <div class="fact-grid">
+      <div>
+        <span class="k">Ticker</span>
+        <span class="v">$RWI</span>
+      </div>
+      <div>
+        <span class="k">Network</span>
+        <span class="v">Robinhood Chain</span>
+      </div>
+      <div>
+        <span class="k">Contract</span>
+        <span class="v">0x2286397228be256529BE1ae9ed8D7d16549e9C6A</span>
+      </div>
+      <div>
+        <span class="k">Launched</span>
+        <span class="v">July 18, 2026 · via Pons</span>
+      </div>
+      <div>
+        <span class="k">Total supply</span>
+        <span class="v">1,000,000,000 $RWI</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 00 · ABSTRACT ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">00 — Abstract</p>
+    <h2>The one-line thesis.</h2>
+    <p>Real World Impact ($RWI) is a memecoin with a single, verifiable job: convert the natural fee revenue of a traded token into published donations to vetted charities. There is no vesting cliff, no roadmap of future features to unlock, and no discretionary treasury. What happens onchain is the entire product, and the product is proof.</p>
+    <p>This document describes the mechanism, the tokenomics, the burn flywheel that ties $RWI back to the launchpad it was born on (Pons), and the disclosure standard the project holds itself to.</p>
+  </div>
+</section>
+
+<!-- ================= 01 · PREMISE ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">01 — The premise</p>
+    <h2>Crypto points inward. RWI points out.</h2>
+    <p>Crypto is very good at moving value around inside itself. Tokens buy tokens, protocols reward protocols, and the loop closes. That is fine — closed loops are how liquidity forms — but they are not, on their own, a claim on the world. $RWI is an attempt to route a fraction of that internal motion outward on a fixed schedule, without turning the effort into a charity that happens to have a token, or a token that happens to gesture at charity. The mechanism is the marketing. The receipts are the pitch.</p>
+    <p>Nothing about $RWI is investment advice, and nothing here promises price behavior. What it does promise is procedural: fees flow, donations are made, and each one is published with the transaction hash that settled it. If it is not on the ledger, it did not happen.</p>
+  </div>
+</section>
+
+<!-- ================= 02 · MECHANISM ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">02 — How it works</p>
+    <h2>Fees in, receipts out.</h2>
+    <p>$RWI runs two liquidity pools on Uniswap: a main $RWI/$WETH pool that funds the donations, and a smaller $RWI/$PONS pool whose entire fee stream is burned. Section 03 covers the burn side. This section covers the donations.</p>
+    <p>Every buy and sell in the main pool pays a trading fee back into the pool. As the fee-earning creator of the token, the project's share of those fees accrues in a wallet on a rolling basis. When it's time to donate, that balance is sent to a vetted charity, and the transaction hash is published alongside the announcement.</p>
+
+    <div class="equation">
+      <div class="step"><b>01</b>Trading in the main $RWI/$WETH pool generates fee revenue</div>
+      <div class="step"><b>02</b>Fees accrue to the RWI wallet in $ETH</div>
+      <div class="step"><b>03</b>$ETH is donated to a vetted charity — receipt published</div>
+    </div>
+
+    <p>Recipients are not chosen by governance vote or on a rotation. Donations flow through <a href="https://thegivingblock.com/">The Giving Block</a>, a crypto-native donation platform that pre-vets every nonprofit in its network against nationally recognized standards — 990 filings, Charity Navigator ratings, and organizational transparency. The recipient list to date spans hunger relief, homelessness, children's health, and children's hospitals. The vetting layer means the trust burden sits with an accredited third-party service, not the project alone.</p>
+  </div>
+</section>
+
+<!-- ================= 03 · BURN ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">03 — The burn</p>
+    <h2>Extending the Pons flywheel.</h2>
+    <p>$RWI was launched on Pons, a launchpad on Robinhood Chain whose economic model routes its platform fees into $PONS buybacks. Every project that succeeds on Pons therefore feeds back into the token that made the launch possible in the first place. RWI takes that flywheel one step further with a deliberate two-pool architecture.</p>
+    <p>The main liquidity pool pairs $RWI with $WETH. Trading fees earned there are the source of the donations described in the next section — the working capital of the mission. Alongside it sits a second, dedicated pool that pairs $RWI with $PONS. We call it the <em>earn-and-burn pool</em>: the project's entire share of $PONS accrued here is sent directly to a burn address. Never sold, never spent, permanently removed from circulation. The burn wallet is public: <code>0x9CD7C9196A4C1836A3DF089cb210272e07e6A5e5</code>. Its balance can only grow, and it can be watched in real time on the RWI site.</p>
+    <p>The reasoning is straightforward. A stronger Pons means a healthier launchpad, which means a healthier Robinhood Chain, which means a bigger stage for the mission that $RWI exists to fund. Burning our share of $PONS is the most direct way to contribute to that outcome that does not involve selling into the market we depend on. Rising tide, fewer tokens.</p>
+  </div>
+</section>
+
+<!-- ================= 04 · LEDGER ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">04 — The ledger</p>
+    <h2>Proof, not promises.</h2>
+    <p>The word "transparent" is close to meaningless in crypto — everything is transparent, and yet very little is legible. RWI's disclosure standard is a small commitment with real teeth: every donation is announced publicly, both on X and on the site's ledger, with two links attached to it. The first is the onchain settlement receipt. The second is the public announcement post. Either can be independently verified without trusting the project.</p>
+    <p>To date the ledger shows:</p>
+
+    <div class="ledger-table">
+      <div class="row head"><div class="name">Recipient</div><div class="amt">Amount</div></div>
+      <div class="row"><div class="name">Coalition for the Homeless</div><div class="amt mono">$270.87</div></div>
+      <div class="row"><div class="name">No Kid Hungry</div><div class="amt mono">$1,832.22</div></div>
+      <div class="row"><div class="name">Children's Miracle Network Hospitals</div><div class="amt mono">$74.61</div></div>
+      <div class="row"><div class="name">Ronald McDonald House</div><div class="amt mono">$93.47</div></div>
+      <div class="totals"><div class="name">Total to date</div><div class="amt mono">$2,271.17</div></div>
+    </div>
+
+    <p>The live version of this table — updated as donations are made — is maintained at <a href="https://rwihood.org/#ledger">rwihood.org/#ledger</a>. Historical entries are never removed, edited, or reordered after the fact, only appended.</p>
+  </div>
+</section>
+
+<!-- ================= 05 · TOKENOMICS ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">05 — Token &amp; contract</p>
+    <h2>What exists, what does not.</h2>
+
+    <h3>Deployment</h3>
+    <p>$RWI was deployed on Robinhood Chain (chain ID 4663) on July 18, 2026. The token contract is <code>0x2286397228be256529BE1ae9ed8D7d16549e9C6A</code>. The main liquidity pool pairs $RWI with $WETH on Uniswap at <code>0xff6aa24815d1274a9be0cfd17c7c7489cd40a697</code>. A second, dedicated $RWI/$PONS pool at <code>0x62a9e7cf94049dded854c26ff6204079a1c8caed</code> operates as the earn-and-burn pool described in section 03 — separate from the main venue and designed so that everything the project earns from it is destroyed.</p>
+
+    <h3>Supply</h3>
+    <p>Total supply is 1,000,000,000 $RWI, fixed at deployment. There is no mint function, and no owner privileges to change balances or freeze accounts. What was deployed is what exists, and it will not be changed. Any tokens sent to a burn address are removed from circulation permanently and can be counted onchain against total supply.</p>
+
+    <h3>What RWI is not</h3>
+    <p>$RWI is not a security, is not a claim on a treasury, and is not a governance token. Holders do not vote on donation targets and are not entitled to any share of fee revenue directly. The project's charitable output is committed procedurally — through published donations against a public ledger — rather than contractually. This is a design choice: procedural commitments can be verified in the moment, while contractual ones require legal enforcement no memecoin can credibly provide.</p>
+
+    <h3>Fee revenue</h3>
+    <p>Trading fees accrue to the project wallet on an ongoing basis. Fees earned in the main $RWI/$WETH pool are converted to $ETH and donated. Fees earned in the earn-and-burn $RWI/$PONS pool are burned in full. No portion of either stream is retained as personal compensation to the founder, and there is no development treasury being carved out for future spending.</p>
+  </div>
+</section>
+
+<!-- ================= 06 · WHAT CHANGES ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">06 — What changes, what doesn't</p>
+    <h2>The load-bearing parts stay.</h2>
+    <p>The site will evolve, the receipts list will grow, and the front-end tooling around the project will keep improving. What will not change is the mechanism at the center: fee revenue is either donated to a vetted charity or burned. That is the whole product.</p>
+    <p>Because the mechanism is procedural, so are its failure states. RWI has stopped being RWI if any of the following occurs — and each is observable directly, by anyone, without permission.</p>
+
+    <div class="equation">
+      <div class="step"><b>01</b>The main pool's fee revenue is directed anywhere other than donations</div>
+      <div class="step"><b>02</b>$PONS from the earn-and-burn pool is sold instead of sent to the burn wallet</div>
+      <div class="step"><b>03</b>Donations are made silently — no announcement, no tx hash</div>
+      <div class="step"><b>04</b>Announced donations don't settle onchain, or settle outside The Giving Block's vetted network</div>
+      <div class="step"><b>05</b>The founder retains fee revenue as personal income</div>
+    </div>
+
+    <p>None of these require a press release to detect. They only require someone to check.</p>
+  </div>
+</section>
+
+<!-- ================= 07 · FOUNDER ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">07 — The founder</p>
+    <h2>The person behind it.</h2>
+    <p>Louis S. was born and raised in Northwest Florida. He has worked in customer service since 2012 and in finance since 2020 — over a decade helping people, and years understanding how money actually moves. RWI is where those two threads meet: the helping isn't the marketing, it's the mechanism, and every bit of it settles on a public ledger under his name.</p>
+    <p>The founder operates publicly as <a href="https://x.com/Burgers_Louis">@Burgers_Louis</a> and <a href="https://x.com/BurgersOnBase">@BurgersOnBase</a> on X, and as <code>burgersonbase.base.eth</code> onchain. RWI is not the founder's first onchain project, and the working patterns established across those projects — small, self-contained, verifiable, no backend — carry through here.</p>
+  </div>
+</section>
+
+<!-- ================= 08 · RISKS ================= -->
+<section>
+  <div class="wrap sec-inner">
+    <p class="eyebrow">08 — Risks &amp; disclaimers</p>
+    <h2>Read this part carefully.</h2>
+    <p>$RWI is a memecoin. It is a highly volatile digital asset with no earnings, no cash flows accruing to holders, and no intrinsic value floor. It is entirely possible for it to trade to zero, and holders should not purchase it with capital they are unwilling to lose entirely.</p>
+    <p>Nothing in this document is investment, tax, or legal advice. The charitable activity described here is a feature of how project revenue is deployed; it does not make $RWI a security, a donation-tax vehicle, or a substitute for direct giving. Purchasers do not receive a tax deduction for buying the token, and the project does not act as a fiscal agent or intermediary for donors seeking one — donations are made from project revenue after it accrues.</p>
+    <p>Robinhood Chain is a newer network and carries the usual smart-contract, bridge, and liquidity risks that come with any early-stage chain. Users should conduct their own diligence, verify contract addresses directly rather than trusting linked material, and interact only through wallets they control.</p>
+  </div>
+</section>
+
+<!-- ================= APPENDIX ================= -->
+<section id="appendix" class="appendix">
+  <div class="wrap sec-inner">
+    <p class="eyebrow">Appendix — Addresses &amp; references</p>
+    <h2>Everything, verifiable.</h2>
+
+    <div class="row"><div class="k">Token contract</div><div class="v">0x2286397228be256529BE1ae9ed8D7d16549e9C6A</div></div>
+    <div class="row"><div class="k">Main pool</div><div class="v">$RWI / $WETH · <a href="https://dexscreener.com/robinhood/0xff6aa24815d1274a9be0cfd17c7c7489cd40a697">0xff6aa24815d1274a9be0cfd17c7c7489cd40a697</a></div></div>
+    <div class="row"><div class="k">Earn &amp; burn pool</div><div class="v">$RWI / $PONS · <a href="https://www.dextools.io/app/robinhood/pair-explorer/0x62a9e7cf94049dded854c26ff6204079a1c8caed">0x62a9e7cf94049dded854c26ff6204079a1c8caed</a></div></div>
+    <div class="row"><div class="k">$PONS burn wallet</div><div class="v">0x9CD7C9196A4C1836A3DF089cb210272e07e6A5e5</div></div>
+    <div class="row"><div class="k">Network</div><div class="v">Robinhood Chain · Chain ID 4663</div></div>
+    <div class="row"><div class="k">Website</div><div class="v"><a href="https://rwihood.org/">rwihood.org</a></div></div>
+    <div class="row"><div class="k">Live ledger</div><div class="v"><a href="https://rwihood.org/#ledger">rwihood.org/#ledger</a></div></div>
+    <div class="row"><div class="k">Live burn</div><div class="v"><a href="https://rwihood.org/#burn">rwihood.org/#burn</a></div></div>
+    <div class="row"><div class="k">Donation platform</div><div class="v"><a href="https://thegivingblock.com/">The Giving Block</a></div></div>
+    <div class="row"><div class="k">Founder</div><div class="v"><a href="https://x.com/Burgers_Louis">@Burgers_Louis</a> · <a href="https://x.com/BurgersOnBase">@BurgersOnBase</a> · burgersonbase.base.eth</div></div>
+    <div class="row"><div class="k">Project X account</div><div class="v"><a href="https://x.com/RWIrobinhood">@RWIrobinhood</a></div></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px 24px;width:100%">
+    <span>Real World Impact · Whitepaper · July 2026</span>
+    <a href="https://rwihood.org/">rwihood.org</a>
+  </div>
+</footer>
+
+</body>
+</html>
