@@ -37,6 +37,11 @@
   a{color:inherit}
 
   .wrap{max-width:780px;margin:0 auto;padding:0 clamp(28px,8vw,56px)}
+  /* Header uses index.html's wrap metrics so the brand + ticker sit at the exact same
+     position when switching between the two pages. Body content keeps the paper's measure. */
+  header .wrap{max-width:820px;padding:0 clamp(32px,7vw,64px)}
+  @media (max-width:820px){header .wrap{padding:0 38px}}
+  @media (max-width:560px){header .wrap{padding:0 42px}}
 
   /* ---------- top strip ---------- */
   header{border-bottom:1px solid var(--rule-strong);position:sticky;top:0;background:var(--lime);z-index:100}
@@ -53,7 +58,7 @@
   /* Ticker is a link but non-interactive on desktop — matches your "don't make ticker clickable" preference.
      On mobile the pointer-events flip enables it to act as the back-to-site affordance. */
   .wp-ticker{pointer-events:none}
-  #ticker{opacity:0;transition:opacity .4s;margin-left:6px}
+  #ticker{opacity:0;transition:opacity .4s;margin-left:10px}
   #ticker.on{opacity:1}
   @media (max-width:560px){
     #ticker .sep{display:none}
