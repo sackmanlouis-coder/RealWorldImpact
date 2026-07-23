@@ -210,7 +210,9 @@
   /* Header mobile rules use index.html's 560px breakpoint (not 640) so the two pages'
      headers switch to compact mode at the exact same width — no jump when swapping pages. */
   @media (max-width: 560px){
-    header .strip{flex-wrap:nowrap;gap:12px;padding-top:16px;padding-bottom:16px;font-size:10.5px;letter-spacing:.05em}
+    /* Index's mobile header renders with zero vertical strip padding (its .wrap{padding:0 42px}
+       shorthand overrides the .strip padding). Match that exactly so there's no height jump. */
+    header .strip{flex-wrap:nowrap;gap:12px;padding-top:0;padding-bottom:0;font-size:10.5px;letter-spacing:.05em}
     header .strip>:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     header .links{flex:none;flex-wrap:nowrap;gap:13px}
     #ticker .sep{display:none}
