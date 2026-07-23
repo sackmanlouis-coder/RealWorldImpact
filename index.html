@@ -827,16 +827,16 @@
         <style>${paper.styles}</style>
         ${paper.body}
       `;
-      // In shadow-DOM mode, intercept ticker clicks to return to the site in-place
-      // (on mobile only — desktop has pointer-events:none on the ticker so clicks never fire there).
-      // The standalone whitepaper's default href="/" is honored only when the site isn't hosting it.
-      const shadowTickerLink = shadow.querySelector('.wp-ticker');
-      if(shadowTickerLink){
-        shadowTickerLink.addEventListener('click', e=>{
-          e.preventDefault();
-          showSite(true);
-        });
-      }
+      // In shadow-DOM mode, both the wp-brand (desktop) and wp-ticker (mobile) act as back-to-site.
+      // Intercept clicks so we return to the site in-place instead of navigating to /.
+      // (On standalone whitepaper.html the href="/" is honored naturally.)
+      const backHandler = e => {
+        e.preventDefault();
+        showSite(true);
+      };
+      shadow.querySelectorAll('.wp-brand, .wp-ticker').forEach(el => {
+        el.addEventListener('click', backHandler);
+      });
       // Register the whitepaper's ticker into the site's ticker Set so it updates from the same poll.
       const shadowTick = shadow.getElementById ? shadow.getElementById('ticker') : shadow.querySelector('#ticker');
       if(shadowTick && typeof tickerElements !== 'undefined'){
