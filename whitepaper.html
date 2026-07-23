@@ -36,7 +36,7 @@
   ::selection{background:var(--ink);color:var(--lime)}
   a{color:inherit}
 
-  .wrap{max-width:780px;margin:0 auto;padding:0 clamp(28px,6vw,56px)}
+  .wrap{max-width:780px;margin:0 auto;padding:0 clamp(28px,8vw,56px)}
 
   /* ---------- top strip ---------- */
   header{border-bottom:1px solid var(--rule-strong)}
@@ -151,6 +151,45 @@
     .appendix{cursor:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAAABmJLR0QA/wD/AP+gvaeTAAACeklEQVRIidXUT0gUURwH8O+b2Z15b+bNOrOtSX9ICcqkoD8WFGRBUpf+QKQiRGAXwYrqIEQFkhBGkGAolB466EG6iET/TAgyxINW0KHISxB2KKzWlHVzZ96vQwQWbLKbQ/Q9fnnv93nwHg/4F7Ftc6+Uojp0SEreaUtBMsYvLfZs7fdi3WaCaeKC64luANHQoLWbCLdGVNQrRI0XF49d13VDgQBgxWqg80lgriqlbUxPj3LOi0OBACBeBHQ8UuaW3Sjmgj2zLKs8FAgAhA1cua2iB+rIjURp2LKsg6FAAKDpwNlWpZ9oUYauU7+U1slQoJ+paiDW3KO0SJTaYjHRnsvenCAA2HWI0D6gInaM6l1P9AMQoUAAULaV0DWkjMLl2OclxLCUcmkoEAAsKwG6nipzzUZaHzWD545jloYCAYDjEtruKmPnfirSdDbqOLziT+sjuQx/Nw70tmkqOYnM1CeomSnQTBLMzzCHMQwASABI5QV9+Qg4HhCJAl8/M9zvYRpj1E3ExolYUtMoCVCSMTWRDVkQGnnI0HRM8482Kr3uHLEN2wklZZR++wrvU6nZawsdcn6y3lHfTYaLtVrgz9Fg3w0252d+9LWniRucnQFg/BUUBAzXG7Wg47z2zffZkenp9OHUDEsP3WEAgMpqAhdk2TavyQX6JVLyzgJPkBsXk/M/UccRV8sr+OyYMmhMGdTQzCleKF7mDdm2aI0v4a+FECvn95zzYilF0PvCpDFl0IMJg5yYCIQQO/K1IsjyQLwEv1dVz/3BDwadajGVFxcZKa3L+UJZIyXfEysQfoEr/HiCv7FtfhyAuegQAGZZvMm2eWUYw/+/fAeiob/yhcZVjQAAAABJRU5ErkJggg==") 4 2,default}
     .appendix a,.appendix button{cursor:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACAklEQVR42u2UPYsTURSGn7mTBAayTNRG7AS/CLh+FFvYT7PabBMXBBt/gFhYCIKNQkpBLAVhG7dVAruJ/oCVFVcQNWhlo4IKugkDS849FpObzO5mdWEmwSIvHO7hwsx57nvPPbBD5XIwF1aCZlgJmuVyMMekFVaC5rot6botaVgJmuOuZ3ZtGKJR+cQAJq3/H+DAwUDH2ZD/BGh9Fx4+t5Ff4O44YPZ1BafOK8YQOZhiibU+yJGJ98DJcwrAg1Ub+QUeZ4UwYSVo7tdaa8FKkh+fVe43EogsAAVjiJ68FYCoVvV33b8qqMLqN8FKkgOIwLFZzTwrjLW0AA4dhhc/ZdvPVEFtEiLJagWefRZEQHo5NKH0uF2r+q0fX5ONxeuK6tDuwSoJhCvs9jIDdDrxSyss16p+QxUuzOvgpK649HNxIL1h5PIKNjfjR55H9f0rjxNndJvdrnC6qIv2hocq77IAeC6ZmQmuGZ+FlS9y0VoG16B2uA7A+nCLp/06wO9f8a3Mc8BalpwLe9mdDmvBGC5bYTmXQdTtxlvS496NS6axZ9FUI3584wHEnU68kdskdC60X3vDwmkXZNj9d66aurU8zXUUOxduLpj6Trsl/SIkH/sBCiPG7VKxwIfBM0w3orrcA/Cz2j8SoNuNt8Ji8OnKWf/o3z5Upc1UU0011VQ56A9N/2Ewn1lofAAAAABJRU5ErkJggg==") 5 0,pointer}
     /* buttons that invert to ink on hover need the lime hand */
+  }
+
+  /* ---------- mobile refinements ---------- */
+  @media (max-width: 640px){
+    /* Cover — tighter vertical rhythm; mobile screens can't afford 12vh gaps */
+    .cover{padding:56px 0 44px}
+    .cover .doc-meta{margin-bottom:36px;gap:6px 16px}
+    .cover h1{margin-bottom:18px}
+    .cover .sub{font-size:1.05rem;margin-bottom:36px;max-width:none}
+    .cover .fact-grid{gap:18px 24px;padding-top:22px}
+    .fact-grid .v{letter-spacing:.04em}
+
+    /* Section rhythm */
+    .sec-inner{padding:44px 0}
+    .eyebrow{margin-bottom:14px}
+    h2{font-size:clamp(1.7rem,7vw,2.2rem);margin-bottom:20px}
+    h3{margin:24px 0 10px}
+    p{margin-top:12px}
+    p+p{margin-top:12px}
+
+    /* Equation — switch to top-align so wrapping step text doesn't misalign with the number prefix */
+    .equation{margin:20px 0;padding:18px 0;font-size:13px;line-height:1.6}
+    .equation .step{align-items:flex-start;gap:12px}
+    .equation .step b{padding-top:2px}
+
+    /* Ledger table — reduce name font size and gap so long charity names sit cleaner next to amounts */
+    .ledger-table .row{gap:10px;padding:12px 0}
+    .ledger-table .row .name{font-size:15px;line-height:1.35}
+    .ledger-table .totals{padding:14px 0}
+
+    /* Appendix — the 160px key column was crushing values on narrow screens.
+       Stack key on top of value so addresses and links get the full row width. */
+    .appendix .row{grid-template-columns:1fr;gap:6px;padding:14px 0}
+    .appendix .row .k{padding-top:0}
+    .appendix .row .v{font-size:12.5px}
+
+    /* Footer — smaller, tighter */
+    footer{padding:26px 0;font-size:10.5px;gap:8px 16px}
+    .strip{font-size:11px;gap:6px 14px}
   }
 
   /* ---------- print ---------- */
