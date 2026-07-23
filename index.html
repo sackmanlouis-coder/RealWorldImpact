@@ -827,20 +827,15 @@
         <style>${paper.styles}</style>
         ${paper.body}
       `;
-      // Inject a "← Back to site" link at the start of the whitepaper's header links
-      // (standalone whitepaper doesn't include this — it only appears when mounted via the site).
-      // The .back-to-site class scopes the CSS rule that hides this on desktop.
-      const linksDiv = shadow.querySelector('header .strip .links');
-      if(linksDiv){
-        const backLink = document.createElement('a');
-        backLink.className = 'back-to-site';
-        backLink.textContent = '← Back to site';
-        backLink.href = '#';
-        backLink.addEventListener('click', e=>{
+      // In shadow-DOM mode, intercept ticker clicks to return to the site in-place
+      // (on mobile only — desktop has pointer-events:none on the ticker so clicks never fire there).
+      // The standalone whitepaper's default href="/" is honored only when the site isn't hosting it.
+      const shadowTickerLink = shadow.querySelector('.wp-ticker');
+      if(shadowTickerLink){
+        shadowTickerLink.addEventListener('click', e=>{
           e.preventDefault();
           showSite(true);
         });
-        linksDiv.prepend(backLink);
       }
       // Register the whitepaper's ticker into the site's ticker Set so it updates from the same poll.
       const shadowTick = shadow.getElementById ? shadow.getElementById('ticker') : shadow.querySelector('#ticker');
