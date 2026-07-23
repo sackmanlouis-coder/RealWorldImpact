@@ -507,17 +507,25 @@
   }
   (function(){
     const de=document.documentElement;
+    let revealsStarted=false;
+    function onScroll(){
+      const y=window.scrollY||0;
+      if(y>4){
+        de.classList.remove('no-fade');
+        de.classList.add('scrolled');
+        if(!revealsStarted){revealsStarted=true;startReveals()}
+      }else{
+        // back at the very top — fade the ink band back out so the page reads all-lime again
+        de.classList.remove('scrolled');
+      }
+    }
     if((window.scrollY||0)>4){
       // page loaded mid-scroll (refresh, anchor) — show everything instantly, no fade flash
       de.classList.add('no-fade','scrolled');
+      revealsStarted=true;
       startReveals();
-    }else{
-      window.addEventListener('scroll',function once(){
-        de.classList.add('scrolled');
-        startReveals();
-        window.removeEventListener('scroll',once);
-      },{passive:true});
     }
+    window.addEventListener('scroll',onScroll,{passive:true});
   })();
   // copy contract address
   const btn=document.getElementById('copyBtn');
@@ -914,6 +922,16 @@
           if(target) target.scrollIntoView({behavior:'smooth'});
         });
       }
+      // Scroll-gate the paper's References ink band, mirroring the site's ledger behavior.
+      // The :host(...) rules in the paper's CSS read these classes off the host element.
+      host.classList.add('js');
+      function hostScroll(){
+        const y=window.scrollY||0;
+        if(y>4){host.classList.remove('no-fade');host.classList.add('scrolled')}
+        else{host.classList.remove('scrolled')}
+      }
+      if((window.scrollY||0)>4){host.classList.add('no-fade','scrolled')}
+      window.addEventListener('scroll', hostScroll, {passive:true});
       // Register the whitepaper's ticker into the site's ticker Set so it updates from the same poll.
       const shadowTick = shadow.getElementById ? shadow.getElementById('ticker') : shadow.querySelector('#ticker');
       if(shadowTick && typeof tickerElements !== 'undefined'){

@@ -136,6 +136,19 @@
   .ledger-table .totals .name{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase}
 
   /* ---------- inverted references band ---------- */
+  /* Scroll-gated like index's ledger: invisible until first scroll, fades back out at the top.
+     html.js rules cover the standalone page; :host rules cover shadow-DOM mode (document-level
+     selectors can't cross the shadow boundary, so the host element carries the state classes). */
+  html.js .appendix{opacity:0;transition:opacity .9s ease}
+  html.js.scrolled .appendix{opacity:1}
+  html.js.no-fade .appendix{transition:none}
+  :host(.js) .appendix{opacity:0;transition:opacity .9s ease}
+  :host(.js.scrolled) .appendix{opacity:1}
+  :host(.js.no-fade) .appendix{transition:none}
+  @media (prefers-reduced-motion:reduce){
+    html.js .appendix{opacity:1;transition:none}
+    :host(.js) .appendix{opacity:1;transition:none}
+  }
   .appendix{background:var(--ink);color:var(--lime)}
   .appendix ::selection{background:var(--lime);color:var(--ink)}
   .appendix .eyebrow{color:var(--lime)}
@@ -229,6 +242,7 @@
   /* ---------- print ---------- */
   @media print{
     :root{--lime:#fff;--ink:#000;--rule:#bbb;--rule-strong:#000}
+    html.js .appendix{opacity:1;transition:none}
     body{background:#fff;color:#000;font-size:11pt;line-height:1.5}
     header,footer,.strip{display:none}
     .wrap{max-width:100%;padding:0 0.6in}
@@ -243,6 +257,7 @@
     a{color:inherit;border-bottom:0 !important;text-decoration:none}
   }
 </style>
+<script>document.documentElement.classList.add('js')</script>
 </head>
 <body>
 
@@ -453,6 +468,20 @@
   </div>
 </footer>
 
+<script>
+  // Scroll-gated References band (standalone visits) — mirrors index.html's ledger behavior:
+  // hidden until the first scroll, fades in gradually, fades back out at the very top.
+  (function(){
+    const de=document.documentElement;
+    function onScroll(){
+      const y=window.scrollY||0;
+      if(y>4){de.classList.remove('no-fade');de.classList.add('scrolled')}
+      else{de.classList.remove('scrolled')}
+    }
+    if((window.scrollY||0)>4){de.classList.add('no-fade','scrolled')}
+    window.addEventListener('scroll',onScroll,{passive:true});
+  })();
+</script>
 <script>
   // Self-contained ticker for standalone whitepaper.html visits.
   // (When loaded via the site's shadow-DOM swap, this script does not execute — the site's
