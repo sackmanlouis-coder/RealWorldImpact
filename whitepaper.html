@@ -50,6 +50,9 @@
   .strip .links{display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:flex-end}
   .wp-left{display:flex;align-items:center;gap:16px;min-width:0}
   .wp-brand{white-space:nowrap}
+  /* Back to site link is injected by the site's mount() when the whitepaper loads via shadow DOM.
+     Hidden on desktop (browser back button suffices); visible on mobile via the media query below. */
+  .back-to-site{display:none}
   #ticker{opacity:0;transition:opacity .4s;margin-left:6px}
   #ticker.on{opacity:1}
   @media (max-width:560px){
@@ -199,6 +202,8 @@
     .strip{font-size:11px;gap:6px 14px}
     /* On mobile hide the Real World Impact brand label to keep the header uncrowded */
     .wp-brand{display:none}
+    /* Show the back-to-site link on mobile (mount() injects it when loaded via the site) */
+    .back-to-site{display:inline}
   }
 
   /* ---------- print ---------- */
@@ -229,7 +234,7 @@
         <span>$RWI&nbsp;<span id="ticker" aria-live="polite"></span></span>
       </div>
       <div class="links">
-        <a href="#references">References / Links</a>
+        <a href="#references">References</a>
       </div>
     </div>
   </div>

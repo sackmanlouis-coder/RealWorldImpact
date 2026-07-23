@@ -828,10 +828,12 @@
         ${paper.body}
       `;
       // Inject a "← Back to site" link at the start of the whitepaper's header links
-      // (the standalone whitepaper doesn't include this — it only appears when mounted via the site).
+      // (standalone whitepaper doesn't include this — it only appears when mounted via the site).
+      // The .back-to-site class scopes the CSS rule that hides this on desktop.
       const linksDiv = shadow.querySelector('header .strip .links');
       if(linksDiv){
         const backLink = document.createElement('a');
+        backLink.className = 'back-to-site';
         backLink.textContent = '← Back to site';
         backLink.href = '#';
         backLink.addEventListener('click', e=>{
