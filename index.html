@@ -84,7 +84,7 @@
   #ticker.on{opacity:1}
 
   /* ---------- hero: the logo dissolves into the page ---------- */
-  .hero{padding:9vh 0 7vh;text-align:center}
+  .hero{padding:3vh 0 4vh;text-align:center}
   .hero img{
     width:min(340px,64vw);height:auto;display:block;margin:0 auto;
     /* same lime as the page — the mark sits directly on the site */
@@ -92,13 +92,13 @@
   .hero h1{
     font-size:clamp(2.6rem,7.5vw,4.6rem);
     font-weight:500;line-height:1.04;letter-spacing:-.015em;
-    margin-top:28px;
+    margin-top:18px;
   }
   .hero h1 em{font-style:italic;font-weight:400}
   .hero p.lede{
-    max-width:34ch;margin:22px auto 0;font-size:clamp(1.05rem,2.4vw,1.3rem);
+    max-width:34ch;margin:14px auto 0;font-size:clamp(1.05rem,2.4vw,1.3rem);
   }
-  .hero .cta-row{margin-top:36px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .hero .cta-row{margin-top:24px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
   .btn{
     font-family:var(--mono);font-size:13px;letter-spacing:.12em;text-transform:uppercase;
     text-decoration:none;padding:14px 26px;border:1.5px solid var(--ink);
@@ -128,18 +128,18 @@
 
   /* ---------- manifesto sections ---------- */
   section{border-top:1px solid var(--rule-strong)}
-  .sec-inner{padding:64px 0}
+  .sec-inner{padding:44px 0}
   .eyebrow{
     font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
     margin-bottom:22px;
   }
   h2{font-size:clamp(1.9rem,4.5vw,2.7rem);font-weight:500;letter-spacing:-.01em;line-height:1.1;max-width:20ch}
-  .sec-inner>p{max-width:58ch;margin-top:18px}
+  .sec-inner>p{max-width:58ch;margin-top:14px}
 
-  .steps{margin-top:36px;border-top:1px solid var(--rule)}
+  .steps{margin-top:24px;border-top:1px solid var(--rule)}
   .step{
     display:grid;grid-template-columns:120px 1fr;gap:18px;
-    padding:22px 0;border-bottom:1px solid var(--rule);
+    padding:16px 0;border-bottom:1px solid var(--rule);
   }
   .step b{font-family:var(--mono);font-weight:500;font-size:13px;letter-spacing:.14em;text-transform:uppercase;padding-top:5px}
   .step p{max-width:52ch}
@@ -148,16 +148,16 @@
   .ledger{background:var(--ink);color:var(--lime)}
   .ledger ::selection{background:var(--lime);color:var(--ink)}
   .ledger .eyebrow{color:var(--lime)}
-  .ledger-rows{margin-top:34px;border-top:1px solid rgba(204,254,6,.35)}
+  .ledger-rows{margin-top:24px;border-top:1px solid rgba(204,254,6,.35)}
   .row{
     display:flex;justify-content:space-between;align-items:baseline;gap:16px;
     padding:18px 0;border-bottom:1px solid rgba(204,254,6,.35);
     font-family:var(--mono);font-size:14px;
   }
   .row .val{font-family:var(--serif);font-size:clamp(1.5rem,4vw,2.2rem);font-weight:500}
-  .ledger .note{margin-top:20px;font-size:15px;font-style:italic;opacity:.85}
+  .ledger .note{margin-top:14px;font-size:15px;font-style:italic;opacity:.85}
   .receipts{border-top:1px solid rgba(204,254,6,.35)}
-  .receipt{padding:18px 0;border-bottom:1px solid rgba(204,254,6,.35)}
+  .receipt{padding:14px 0;border-bottom:1px solid rgba(204,254,6,.35)}
   .r-main{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
   .r-name{font-family:var(--serif);font-size:clamp(1.15rem,3vw,1.5rem);font-weight:500}
   .r-amt{font-family:var(--mono);font-size:15px}
@@ -166,14 +166,14 @@
   .r-links a:hover,.r-links a:focus-visible{border-bottom-color:var(--lime)}
 
   /* ---------- burn counter ---------- */
-  .burn-fig{margin-top:38px}
+  .burn-fig{margin-top:24px}
   .burn-num{
     font-size:clamp(2rem,9vw,4.6rem);font-weight:500;line-height:1.1;
     letter-spacing:-.02em;font-variant-numeric:tabular-nums;
   }
   .burn-num .unit{font-size:.38em;letter-spacing:0;font-style:italic;margin-left:.25em;white-space:nowrap}
   .burn-bar{
-    margin-top:30px;height:12px;border:1px solid var(--rule-strong);
+    margin-top:20px;height:12px;border:1px solid var(--rule-strong);
     position:relative;overflow:hidden;
   }
   .burn-bar i{position:absolute;top:0;left:0;bottom:0;width:0;background:var(--ink);transition:width 1.2s ease}
@@ -194,7 +194,7 @@
     .burn-bar i{transition:none}
   }
 
-  .pons-burn{margin-top:40px;padding-top:28px;border-top:1px solid var(--rule)}
+  .pons-burn{margin-top:28px;padding-top:20px;border-top:1px solid var(--rule)}
   .pons-label{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase}
   .pons-label a{text-decoration:none;border-bottom:1px solid var(--rule)}
   .pons-label a:hover,.pons-label a:focus-visible{border-bottom-color:var(--ink)}
@@ -204,7 +204,7 @@
   }
   .pons-fig .unit{font-size:.42em;letter-spacing:0;font-style:italic;margin-left:.25em;white-space:nowrap}
   .pons-usd{margin-top:8px;font-family:var(--mono);font-size:13px;letter-spacing:.08em}
-  .pons-how{margin-top:18px;max-width:62ch}
+  .pons-how{margin-top:14px;max-width:62ch}
   .pons-how p{margin:0;font-size:15px;line-height:1.65}
   .pons-how p+p{margin-top:12px}
   .pons-row{display:flex;flex-wrap:wrap;gap:28px 56px}
@@ -212,7 +212,7 @@
   .pons-usd a{text-decoration:none;border-bottom:1px solid var(--rule)}
   .pons-usd a:hover,.pons-usd a:focus-visible{border-bottom-color:var(--ink)}
 
-  .founder{display:flex;gap:36px;align-items:flex-start;margin-top:36px}
+  .founder{display:flex;gap:36px;align-items:flex-start;margin-top:24px}
   .founder img{
     width:210px;height:auto;flex:none;
     border:1px solid var(--rule-strong);
@@ -252,11 +252,11 @@
   }
   @media (max-width:560px){
     .wrap{padding:0 42px}
-    .hero{padding:10vh 0 8vh}
-    .sec-inner{padding:72px 0}
-    .sec-inner>p{margin-top:22px}
-    .hero h1{margin-top:32px}
-    .hero .cta-row{margin-top:38px}
+    .hero{padding:3vh 0 5vh}
+    .sec-inner{padding:48px 0}
+    .sec-inner>p{margin-top:16px}
+    .hero h1{margin-top:22px}
+    .hero .cta-row{margin-top:26px}
     .step{grid-template-columns:1fr;gap:6px}
     .ca code{max-width:40vw}
   }
@@ -335,7 +335,7 @@
         <div class="row"><span>Charities reached</span><span class="val">4</span></div>
       </div>
 
-      <p class="eyebrow" style="margin-top:48px">Receipts</p>
+      <p class="eyebrow" style="margin-top:32px">Receipts</p>
       <div class="receipts">
         <div class="receipt">
           <div class="r-main">
