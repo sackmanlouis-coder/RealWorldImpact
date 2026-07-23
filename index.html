@@ -273,7 +273,6 @@
   <div class="wrap strip">
     <span>$RWI&nbsp;<span id="ticker" aria-live="polite"></span></span>
     <nav class="links" aria-label="Primary">
-      <a href="#ledger">Ledger</a>
       <a href="#whitepaper" id="paperLink">Whitepaper</a>
       <a href="https://dexscreener.com/robinhood/0xff6aa24815d1274a9be0cfd17c7c7489cd40a697" target="_blank" rel="noopener">Dexscreener</a>
     </nav>
@@ -813,27 +812,23 @@
       host.style.cssText = 'display:block;position:relative;z-index:1';
       document.body.appendChild(host);
       const shadow = host.attachShadow({mode:'open'});
-      // Back link injected at the very top of the shadow — matches the paper's own mono strip aesthetic
-      const backBar = `
-        <style>
-          .back-bar{background:#CCFE06;border-bottom:1px solid rgba(11,11,9,.85);position:sticky;top:0;z-index:100}
-          .back-bar-inner{max-width:780px;margin:0 auto;padding:12px clamp(28px,6vw,56px);display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase}
-          .back-bar a{color:#0B0B09;text-decoration:none;border-bottom:1px solid transparent;padding-bottom:2px}
-          .back-bar a:hover,.back-bar a:focus-visible{border-bottom-color:#0B0B09}
-        </style>
-        <div class="back-bar"><div class="back-bar-inner"><a href="#" data-back>← Back to site</a><span>rwihood.org · whitepaper</span></div></div>
-      `;
       shadow.innerHTML = `
         <style>:host{display:block}</style>
-        ${backBar}
         <style>${paper.styles}</style>
         ${paper.body}
       `;
-      // Wire up the back link
-      shadow.querySelector('[data-back]').addEventListener('click', e=>{
-        e.preventDefault();
-        showSite(true);
-      });
+      // Repurpose the whitepaper's own "rwihood.org" link as our back-to-site trigger.
+      // No injected second header — just retext the existing link and hook the click.
+      const backLink = [...shadow.querySelectorAll('header .strip .links a')]
+        .find(a => a.textContent.trim().toLowerCase().includes('rwihood.org'));
+      if(backLink){
+        backLink.textContent = '← Back to site';
+        backLink.href = '#';
+        backLink.addEventListener('click', e=>{
+          e.preventDefault();
+          showSite(true);
+        });
+      }
     }
 
     function hideSiteChrome(){
