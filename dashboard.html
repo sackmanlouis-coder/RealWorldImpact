@@ -273,10 +273,6 @@
             <button data-p="100" class="on">100%</button>
           </div>
         </div>
-        <div class="field">
-          <div class="flabel"><span>Receive everything as</span></div>
-          <div class="seg" id="uzToken"></div>
-        </div>
         <div class="actions">
           <button class="btn" id="uzBtn">Unzap</button>
           <button class="btn ghost" id="uzCancel">Cancel</button>
@@ -323,6 +319,7 @@ const RPCS = [
 const ROUTER_V2 = '0x89e5db8b5aa49aa85ac63f691524311aeb649eba';       // Uniswap V2 Router02
 const V3_ROUTER = '0xcaf681a66d020601342297493863e78c959e5cb2';       // Uniswap V3 SwapRouter02
 const V3_NPM    = '0x73991a25c818bf1f1128deaab1492d45638de0d3';       // Uniswap V3 NonfungiblePositionManager
+const V3_FACTORY= '0x1f7d7550b1b028f7571e69a784071f0205fd2efa';       // Uniswap V3 Factory
 
 /* Canonical addresses. WETH is DERIVED ONCHAIN at boot from the RWI/WETH main pool
    (the non-RWI side of a pair we trust) — never trust a pasted "WETH", fakes exist. */
@@ -357,7 +354,7 @@ const SEL = {
   exactInputSingle:'0x04e45aaf', mint:'0x88316456', deposit:'0xd0e30db0',
   tokenOfOwnerByIndex:'0x2f745c59', positions:'0x99fbab88',
   // unzap (selectors keccak-verified)
-  decreaseLiquidity:'0x0c49ccbe', collect:'0xfc6f7865', wethWithdraw:'0x2e1a7d4d'
+  decreaseLiquidity:'0x0c49ccbe', collect:'0xfc6f7865', wethWithdraw:'0x2e1a7d4d', getPool:'0x1698ee82'
 };
 const MAX128 = (1n<<128n)-1n;
 const padA = a => a.toLowerCase().replace('0x','').padStart(64,'0');
@@ -994,6 +991,40 @@ async function v3State(pool){
   const d = s.replace('0x','');
   return cachePut(key,{ sqrtP: BigInt('0x'+d.slice(0,64)), tick: Number(decI(d.slice(64,128))), L: toBig(L) });
 }
+// exact Uniswap v3 TickMath — same constants and algorithm as TickMath.sol, so mins are
+// computed against the identical sqrt ratios the pool itself will use
+function sqrtRatioAtTick(tick){
+  let t = BigInt(Math.abs(tick));
+  let ratio = (t & 1n) ? 0xfffcb933bd6fad37aa2d162d1a594001n : 0x100000000000000000000000000000000n;
+  const M = [0xfff97272373d413259a46990580e213an,0xfff2e50f5f656932ef12357cf3c7fdccn,0xffe5caca7e10e4e61c3624eaa0941cd0n,
+    0xffcb9843d60f6159c9db58835c926644n,0xff973b41fa98c081472e6896dfb254c0n,0xff2ea16466c96a3843ec78b326b52861n,
+    0xfe5dee046a99a2a811c461f1969c3053n,0xfcbe86c7900a88aedcffc83b479aa3a4n,0xf987a7253ac413176f2b074cf7815e54n,
+    0xf3392b0822b70005940c7a398e4b70f3n,0xe7159475a2c29b7443b29c7fa6e889d9n,0xd097f3bdfd2022b8845ad8f792aa5825n,
+    0xa9f746462d870fdf8a65dc1f90e061e5n,0x70d869a156d2a1b890bb3df62baf32f7n,0x31be135f97d08fd981231505542fcfa6n,
+    0x9aa508b5b7a84e1c677de54f3e99bc9n,0x5d6af8dedb81196699c329225ee604n,0x2216e584f5fa1ea926041bedfe98n,0x48a170391f7dc42444e8fa2n];
+  for(let i=0;i<19;i++) if(t & (1n<<BigInt(i+1))) ratio = ratio*M[i] >> 128n;
+  if(tick>0) ratio = ((1n<<256n)-1n)/ratio;
+  return (ratio>>32n) + ((ratio & ((1n<<32n)-1n)) ? 1n : 0n); // Q128.128 → Q64.96, round up
+}
+// token amounts held by liquidity L over [sqrtLo, sqrtHi] at current sqrt price S — exact, any range
+function rangeAmounts(L, S, sqrtLo, sqrtHi){
+  if(sqrtLo>sqrtHi){ const x=sqrtLo; sqrtLo=sqrtHi; sqrtHi=x; }
+  if(S<=sqrtLo) return [L*Q96*(sqrtHi-sqrtLo)/(sqrtLo*sqrtHi), 0n];
+  if(S>=sqrtHi) return [0n, L*(sqrtHi-sqrtLo)/Q96];
+  return [L*Q96*(sqrtHi-S)/(S*sqrtHi), L*(S-sqrtLo)/Q96];
+}
+// preflight ladder for min-guarded withdrawals: user slippage → diagnose with mins=0 →
+// one widened retry. Distinguishes "mins too tight" from "pool/position rejects this".
+async function preflightMins(to, build){
+  try{ await preflight({from:account, to, data:build(slipBps)}); return build(slipBps); }
+  catch(e1){
+    try{ await preflight({from:account, to, data:build(10000)}); }
+    catch(e2){ throw new Error('the pool/position rejects this withdrawal — '+(e2&&e2.message||'unknown')); }
+    const wide = Math.min(slipBps*3, 500);
+    try{ await preflight({from:account, to, data:build(wide)}); return build(wide); }
+    catch(e3){ throw new Error('price is moving faster than your slippage allows — try again or raise slippage'); }
+  }
+}
 // exact-in v3 swap output within the active tick, INCLUDING size impact — not spot price.
 // Assumes constant liquidity across the traversed range, which is exact when the pool's
 // liquidity is full-range (as everything this dashboard mints is).
@@ -1381,7 +1412,7 @@ async function loadPositions(){
       v2Rows.push(`<div class="row" data-pair="${p.pair}">
          <span>$${esc(s0)} / $${esc(s1)}${underTxt}</span>
          <span>${fmtUnits(bal,18)}</span>
-         <span>${share.toFixed(4)}%${usdTxt}${canW?'<br><button class="wd pos-act" data-pair="'+p.pair+'">Withdraw</button><button class="uz pos-act" data-kind="v2" data-pair="'+p.pair+'">Unzap</button>':''}</span>
+         <span>${share.toFixed(4)}%${usdTxt}${canW?'<br><button class="uz pos-act" data-kind="v2" data-pair="'+p.pair+'">Unzap</button>':''}</span>
        </div>`);
     }catch(e){/* v3 pool contracts have no ERC20 balanceOf \u2014 skip */}
   }));
@@ -1406,7 +1437,7 @@ async function loadPositions(){
         v3Rows.push(`<div class="row">
            <span>$${esc(match.token0.sym)} / $${esc(match.token1.sym)}<br><span style="opacity:.65;font-size:11px">v3 ${full?'full range':'range ['+lo+', '+hi+']'} \u00b7 NFT #${id}</span></span>
            <span>liq ${liq.toLocaleString('en-US')}</span>
-           <span><a href="https://app.uniswap.org/positions" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--rule);text-decoration:none">Manage \u2197</a>${full?'<br><button class="uz pos-act" data-kind="v3" data-pair="'+match.pair+'" data-id="'+id+'" data-liq="'+liq+'">Unzap</button>':''}</span>
+           <span><a href="https://app.uniswap.org/positions" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--rule);text-decoration:none">Manage \u2197</a><br><button class="uz pos-act" data-kind="v3" data-pair="${match.pair}" data-id="${id}">Unzap</button></span>
          </div>`);
       }
     }catch(e){/* NPM unreachable or none held */}
@@ -1424,21 +1455,12 @@ async function loadPositions(){
 //   v3: decreaseLiquidity → collect → swap the other side (full-range positions only)
 //   Choosing $ETH = the WETH route plus a final WETH.withdraw unwrap.
 // ==========================================================================
-let unzap = null, uzChoice = null, uzPct = 100;
+let unzap = null, uzPct = 100;
 function openUnzap(o){
   unzap = o; uzPct = 100;
   const p = o.pool, t0 = p.token0, t1 = p.token1;
-  $('uzTitle').textContent = 'Unzap $'+t0.sym+' / $'+t1.sym+(o.kind==='v3' ? ' · v3 NFT #'+o.id : '');
+  $('uzTitle').textContent = 'Unzap $'+t0.sym+' / $'+t1.sym+(o.kind==='v3' ? ' \u00b7 v3 NFT #'+o.id : '')+' \u2014 both tokens return to your wallet';
   [...$('uzPct').children].forEach(x=>x.classList.toggle('on', x.dataset.p==='100'));
-  const seg = $('uzToken'); seg.innerHTML='';
-  const opts = [[t0.addr.toLowerCase(),'$'+t0.sym],[t1.addr.toLowerCase(),'$'+t1.sym]];
-  if(CANON_WETH && (t0.addr.toLowerCase()===CANON_WETH || t1.addr.toLowerCase()===CANON_WETH)) opts.push(['ETH','$ETH']);
-  uzChoice = opts[0][0];
-  opts.forEach(([val,label],i)=>{
-    const b=document.createElement('button'); b.textContent=label; b.className=i===0?'on':'';
-    b.addEventListener('click',()=>{ uzChoice=val; [...seg.children].forEach(x=>x.classList.toggle('on',x===b)); });
-    seg.appendChild(b);
-  });
   $('uzStatus').textContent='';
   $('unzapBox').style.display='';
   $('unzapBox').scrollIntoView({behavior:'smooth', block:'nearest'});
@@ -1452,7 +1474,7 @@ $('uzCancel').addEventListener('click', ()=>{ $('unzapBox').style.display='none'
 $('posTable').addEventListener('click', e=>{
   const b = e.target.closest('button.uz'); if(!b) return;
   const p = pools.get(b.dataset.pair); if(!p || !account) return;
-  if(b.dataset.kind==='v3') openUnzap({kind:'v3', pool:p, id:BigInt(b.dataset.id), liq:BigInt(b.dataset.liq)});
+  if(b.dataset.kind==='v3') openUnzap({kind:'v3', pool:p, id:BigInt(b.dataset.id)});
   else openUnzap({kind:'v2', pool:p});
 });
 $('uzBtn').addEventListener('click', async ()=>{
@@ -1462,10 +1484,6 @@ $('uzBtn').addEventListener('click', async ()=>{
     if(!(await ensureChain())){ st.textContent='Switch to Robinhood Chain first.'; return; }
     const t0=p.token0, t1=p.token1;
     const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
-    const slip = 10000n-BigInt(slipBps);
-    const targetAddr = uzChoice==='ETH' ? CANON_WETH : uzChoice; // ETH = WETH route + unwrap at the end
-    const tTgt = targetAddr===t0.addr.toLowerCase()?t0:t1;
-    const tOth = tTgt===t0?t1:t0;
     const b0 = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account)));
     const b1 = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account)));
     let hOut;
@@ -1476,110 +1494,51 @@ $('uzBtn').addEventListener('click', async ()=>{
       if(liq<=0n) throw new Error('nothing to unzap');
       const rh = (await ethCall(p.pair, SEL.getReserves)).replace('0x','');
       const r0=BigInt('0x'+rh.slice(0,64)), r1=BigInt('0x'+rh.slice(64,128));
-      const min0=r0*liq/sup*slip/10000n, min1=r1*liq/sup*slip/10000n;
       const allow = toBig(await ethCall(p.pair, SEL.allowance+padA(account)+padA(ROUTER_V2)));
       if(allow<liq){ st.textContent='Approve LP token in your wallet…'; await sendTx(p.pair, SEL.approve+padA(ROUTER_V2)+padU(liq)); }
+      const build = bps => SEL.removeLiquidity + padA(t0.addr)+padA(t1.addr)
+        + padU(liq)+padU(r0*liq/sup*(10000n-BigInt(bps))/10000n)+padU(r1*liq/sup*(10000n-BigInt(bps))/10000n)
+        + padA(account)+padU(deadline);
+      st.textContent='Checking the withdrawal…';
+      const data = await preflightMins(ROUTER_V2, build);
       st.textContent='Remove liquidity in your wallet…';
-      hOut = await sendTx(ROUTER_V2, SEL.removeLiquidity + padA(t0.addr)+padA(t1.addr)
-        + padU(liq)+padU(min0)+padU(min1)+padA(account)+padU(deadline));
+      hOut = await sendTx(ROUTER_V2, data);
     }else{
-      const liqPart = unzap.liq*BigInt(uzPct)/100n;
-      if(liqPart<=0n) throw new Error('nothing to unzap');
-      const {sqrtP} = await v3State(p);
-      // full-range expected amounts (sqrtLo≈0, sqrtHi≈∞ — exact to ~1e-9 for full-range positions)
-      const e0 = liqPart*Q96/sqrtP, e1 = liqPart*sqrtP/Q96;
-      const min0 = e0*slip/10000n, min1 = e1*slip/10000n;
-      st.textContent='Withdraw + collect (one transaction) in your wallet…';
-      hOut = await sendTx(V3_NPM, encodeMulticall([
-        SEL.decreaseLiquidity + padU(unzap.id)+padU(liqPart)+padU(min0)+padU(min1)+padU(deadline),
+      // POSITION-AUTHORITATIVE v3 exit — everything is read fresh from the NFT itself and
+      // its OWN pool (resolved via the canonical factory), never assumed from the registry.
+      st.textContent='Reading position…';
+      const dd = (await ethCall(V3_NPM, SEL.positions+padU(unzap.id))).replace('0x','');
+      const w = j=>dd.slice(j*64,(j+1)*64);
+      const fee = Number(BigInt('0x'+w(4)));
+      const lo = Number(decI(w(5))), hi = Number(decI(w(6)));
+      const liqNow = BigInt('0x'+w(7));
+      const liqPart = liqNow*BigInt(uzPct)/100n;
+      if(liqPart<=0n) throw new Error('position has no liquidity');
+      const poolAddr = ('0x'+(await ethCall(V3_FACTORY, SEL.getPool+padA(t0.addr)+padA(t1.addr)+padU(fee))).slice(-40)).toLowerCase();
+      if(!isAddr(poolAddr) || /^0x0{40}$/.test(poolAddr)) throw new Error('position pool not found via factory');
+      const S = BigInt('0x'+(await ethCall(poolAddr, SEL.slot0)).replace('0x','').slice(0,64));
+      const sqrtLo = sqrtRatioAtTick(lo), sqrtHi = sqrtRatioAtTick(hi);
+      const [e0, e1] = rangeAmounts(liqPart, S, sqrtLo, sqrtHi); // exact expected amounts, any range
+      const build = bps => encodeMulticall([
+        SEL.decreaseLiquidity + padU(unzap.id)+padU(liqPart)
+          + padU(e0*(10000n-BigInt(bps))/10000n)+padU(e1*(10000n-BigInt(bps))/10000n)+padU(deadline),
         SEL.collect + padU(unzap.id)+padA(account)+padU(MAX128)+padU(MAX128)
-      ]));
+      ]);
+      st.textContent='Checking the withdrawal…';
+      const data = await preflightMins(V3_NPM, build);
+      st.textContent='Withdraw + collect (one transaction) in your wallet…';
+      hOut = await sendTx(V3_NPM, data);
     }
-    // measure what actually arrived, then consolidate into the chosen token.
-    // The removal has already succeeded — if anything below fails, the tokens are
-    // simply sitting in the wallet as both sides, and we say exactly that.
     const g0 = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account))) - b0;
     const g1 = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account))) - b1;
-    const gotOth = tOth===t0?g0:g1;
-    let gotTgt = tTgt===t0?g0:g1;
-    let hSwap = null;
-    try{
-      if(gotOth>0n){
-      if(unzap.kind==='v2'){
-        const rh=(await ethCall(p.pair, SEL.getReserves)).replace('0x','');
-        const r0=BigInt('0x'+rh.slice(0,64)), r1=BigInt('0x'+rh.slice(64,128));
-        const rIn = tOth===t0?r0:r1, rOut = tOth===t0?r1:r0;
-        const minOut = (gotOth*997n*rOut)/(rIn*1000n+gotOth*997n)*slip/10000n;
-        const al = toBig(await ethCall(tOth.addr, SEL.allowance+padA(account)+padA(ROUTER_V2)));
-        if(al<gotOth){ st.textContent='Approve $'+tOth.sym+' in your wallet…'; await sendTx(tOth.addr, SEL.approve+padA(ROUTER_V2)+padU(gotOth)); }
-        st.textContent='Swap $'+tOth.sym+' → $'+tTgt.sym+' in your wallet…';
-        const before = toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account)));
-        hSwap = await sendTx(ROUTER_V2, SEL.swapExactTokensForTokens
-          + padU(gotOth)+padU(minOut)+padU(0xa0)+padA(account)+padU(deadline)
-          + padU(2)+padA(tOth.addr)+padA(tTgt.addr));
-        gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
-      }else{
-        const {sqrtP, L} = await v3State(p); // cache was cleared by the withdrawal tx — this is post-removal state
-        const zeroForOne = tOth.addr.toLowerCase()===t0.addr.toLowerCase();
-        const minOut = v3ExactOut(gotOth, zeroForOne, sqrtP, L, p.fee)*slip/10000n;
-        const al = toBig(await ethCall(tOth.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
-        if(al<gotOth){ st.textContent='Approve $'+tOth.sym+' in your wallet…'; await sendTx(tOth.addr, SEL.approve+padA(V3_ROUTER)+padU(gotOth)); }
-        st.textContent='Swap $'+tOth.sym+' → $'+tTgt.sym+' in your wallet…';
-        const before = toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account)));
-        hSwap = await sendTx(V3_ROUTER, SEL.exactInputSingle
-          + padA(tOth.addr)+padA(tTgt.addr)+padU(p.fee)+padA(account)+padU(gotOth)+padU(minOut)+padU(0));
-        gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
-      }
-      }
-      if(uzChoice==='ETH' && gotTgt>0n){
-        st.textContent='Unwrap WETH → ETH in your wallet…';
-        var hUnwrap = await sendTx(CANON_WETH, SEL.wethWithdraw+padU(gotTgt));
-      }
-    }catch(swapErr){
-      st.innerHTML='Removed ✓ '+txLink(hOut)+' — the consolidation swap didn\'t complete, but both $'+esc(t0.sym)+' and $'+esc(t1.sym)+' are already safely in your wallet.';
-      refreshBalance(); loadPositions(); loadWalletTokens();
-      return;
-    }
-    const sym = uzChoice==='ETH' ? 'ETH' : tTgt.sym;
-    st.innerHTML='Unzapped ✓ ~'+fmtUnits(gotTgt, tTgt.dec)+' $'+esc(sym)+' — '+txLink(hOut)
-      +(hSwap?' · swap '+txLink(hSwap):'')+(hUnwrap?' · unwrap '+txLink(hUnwrap):'');
+    st.innerHTML='Unzapped \u2713 '+fmtUnits(g0>0n?g0:0n,t0.dec)+' $'+esc(t0.sym)+' + '+fmtUnits(g1>0n?g1:0n,t1.dec)+' $'+esc(t1.sym)+' to your wallet \u2014 '+txLink(hOut);
     refreshBalance(); loadPositions(); loadWalletTokens();
   }catch(err){
-    st.textContent='Unzap stopped: '+(err&&err.message||'unknown')+' — nothing further was sent.';
+    st.textContent='Unzap stopped: '+(err&&err.message||'unknown')+' \u2014 nothing further was sent.';
   }
 });
 
-// withdraw: approve LP token → removeLiquidity, minimums from share × reserves × slippage
-$('posTable').addEventListener('click', async e=>{
-  const b = e.target.closest('button.wd'); if(!b) return;
-  const p = pools.get(b.dataset.pair); if(!p||!account||!ROUTER_V2) return;
-  const pct = prompt('Withdraw what percent of this position? (1–100)','100');
-  const pc = Math.min(100, Math.max(1, parseInt(pct||'0',10)||0));
-  if(!pc) return;
-  b.textContent='Withdrawing…'; b.disabled=true;
-  try{
-    if(!(await ensureChain())) throw new Error('wrong network');
-    const bal = toBig(await ethCall(p.pair, SEL.balanceOf+padA(account)));
-    const sup = toBig(await ethCall(p.pair, SEL.totalSupply));
-    const liq = bal*BigInt(pc)/100n;
-    if(liq<=0n) throw new Error('nothing to withdraw');
-    const h = await ethCall(p.pair, SEL.getReserves);
-    const dd = h.replace('0x','');
-    const r0=BigInt('0x'+dd.slice(0,64)), r1=BigInt('0x'+dd.slice(64,128));
-    const slip = 10000n-BigInt(slipBps);
-    const min0 = r0*liq/sup*slip/10000n, min1 = r1*liq/sup*slip/10000n;
-    const allow = toBig(await ethCall(p.pair, SEL.allowance+padA(account)+padA(ROUTER_V2)));
-    if(allow < liq) await sendTx(p.pair, SEL.approve+padA(ROUTER_V2)+padU(liq));
-    const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
-    const data = SEL.removeLiquidity + padA(p.token0.addr)+padA(p.token1.addr)
-      + padU(liq)+padU(min0)+padU(min1)+padA(account)+padU(deadline);
-    await sendTx(ROUTER_V2, data);
-    loadPositions(); refreshBalance();
-  }catch(err){
-    b.textContent='Withdraw'; b.disabled=false;
-    alert('Withdraw stopped: '+(err&&err.message||'unknown')+' — nothing further was sent.');
-  }
-});
+
 
 /* ==========================================================================
    Ticker (same as site) + boot
