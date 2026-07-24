@@ -178,12 +178,6 @@
       <p class="eyebrow">Pools — Liquidity dashboard</p>
       <h1>Pick a pool.<br>Zap one token. Earn the fees.</h1>
       <p class="lede">Every pool below is read live from the chain and its aggregator data — nothing here is a promise. Pick a pool, then zap: one token in, a double-sided LP position out, trading fees accruing to you from the first block.</p>
-
-      <div class="wallet-bar">
-        <button class="btn" id="connectBtn">Connect wallet</button>
-        <span id="walletInfo"></span>
-        <span id="chainChip"></span>
-      </div>
       <p class="fine" style="margin-top:12px">LP positions carry impermanent-loss risk and smart-contract risk. Zapping performs onchain swaps — verify every transaction in your wallet before signing. Not financial advice.</p>
     </div>
   </section>
@@ -199,7 +193,12 @@
   <section class="zap" id="zap">
     <div class="wrap">
       <p class="eyebrow">Zap</p>
-      <h2 id="zapTitle">Select a pool above to begin.</h2>
+      <div class="wallet-bar">
+        <button class="btn" id="connectBtn">Connect wallet</button>
+        <span id="walletInfo"></span>
+        <span id="chainChip"></span>
+      </div>
+      <h2 id="zapTitle" style="margin-top:18px">Select a pool above to begin.</h2>
       <div class="zap-body" id="zapBody" style="display:none">
         <div>
           <div class="field">
@@ -212,6 +211,7 @@
           <div class="field" id="tokenSegField">
             <div class="flabel"><span>Pay with</span></div>
             <div class="seg" id="tokenSeg"></div>
+            <p class="fine" id="tokenNote" style="margin-top:6px"></p>
           </div>
           <div class="field">
             <div class="flabel"><span id="amtLabel">Amount</span><button id="maxBtn" type="button">Balance: <span id="balTxt">—</span> · MAX</button></div>
@@ -452,26 +452,81 @@ $('connectBtn').addEventListener('click', connect);
 
 // wallet token discovery via Blockscout — any ERC-20 with balance becomes a zap source
 let walletTokens = [];
+let tokenScanNote = '';
+// USD price fallback derived from the pools' own DexScreener data — covers RWI, WETH,
+// PONS, and friends even when Blockscout has no exchange_rate for them.
+function priceOf(addr){
+  addr = (addr||'').toLowerCase();
+  let px = 0;
+  pools.forEach(p=>{
+    const ds = p.ds; if(!ds) return;
+    const pu = parseFloat(ds.priceUsd), pn = parseFloat(ds.priceNative);
+    if(ds.baseToken && (ds.baseToken.address||'').toLowerCase()===addr && pu>0) px = pu;
+    else if(ds.quoteToken && (ds.quoteToken.address||'').toLowerCase()===addr && pu>0 && pn>0) px = pu/pn; // quote USD = base USD ÷ base-per-quote
+  });
+  return px;
+}
 async function loadWalletTokens(){
-  walletTokens = [];
-  if(!account) return;
+  walletTokens = []; tokenScanNote = 'Scanning wallet tokens…';
+  if(zapPool) renderTokenSeg();
+  if(!account){ tokenScanNote=''; return; }
+  const me = account; // guard against account switching mid-scan
+  let apiOK = false;
+  const items = [];
+  // primary: flat token-balances endpoint (returns a bare array on stock Blockscout)
   try{
-    const r = await fetch('https://robinhoodchain.blockscout.com/api/v2/addresses/'+account+'/token-balances');
-    const j = await r.json();
-    (Array.isArray(j)?j:[]).forEach(it=>{
-      const t = it.token||{};
-      if((t.type||'')!=='ERC-20') return;
-      const bal = BigInt(it.value||'0');
-      if(bal<=0n) return;
-      const dec = Number(t.decimals)||18;
-      const px = parseFloat(t.exchange_rate)||0; // USD per token, when Blockscout knows it
-      walletTokens.push({addr:(t.address||'').toLowerCase(), sym:t.symbol||'?', dec, _bal:bal, _usd:px*(Number(bal)/10**dec)});
-    });
-    // order: highest USD holding value first; unpriced tokens sink to the end (stable sort keeps API order among them)
-    walletTokens.sort((a,b)=>b._usd-a._usd);
-    walletTokens = walletTokens.slice(0,12);
-    if(zapPool){ renderTokenSeg(); applyMode(); } // re-render the token selector with wallet tokens
+    const r = await fetch('https://robinhoodchain.blockscout.com/api/v2/addresses/'+me+'/token-balances');
+    if(r.ok){
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j : (j && Array.isArray(j.items) ? j.items : null);
+      if(arr){ apiOK = true; arr.forEach(x=>items.push(x)); }
+    }
   }catch(e){}
+  // secondary: paginated /tokens endpoint (same data, {items:[…]} shape)
+  if(!items.length){
+    try{
+      const r = await fetch('https://robinhoodchain.blockscout.com/api/v2/addresses/'+me+'/tokens?type=ERC-20');
+      if(r.ok){
+        const j = await r.json();
+        if(j && Array.isArray(j.items)){ apiOK = true; j.items.forEach(x=>items.push(x)); }
+      }
+    }catch(e){}
+  }
+  if(account!==me) return; // a newer scan owns the state now
+  items.forEach(it=>{
+    const t = it.token||{};
+    if((t.type||'')!=='ERC-20') return;
+    let bal; try{ bal = BigInt(String(it.value!=null?it.value:(it.balance!=null?it.balance:'0'))); }catch(e){ return; }
+    if(bal<=0n) return;
+    const addr = ((t.address||t.address_hash||'')+'').toLowerCase(); // newer Blockscout renamed address → address_hash
+    if(!/^0x[0-9a-f]{40}$/.test(addr)) return;
+    const dec = Number(t.decimals)||18;
+    const px = parseFloat(t.exchange_rate)||priceOf(addr)||0;
+    walletTokens.push({addr, sym:t.symbol||'?', dec, _bal:bal, _usd:px*(Number(bal)/10**dec)});
+  });
+  // last resort: read the registry pools' own tokens straight from the chain —
+  // catches an unreachable or lagging explorer index without leaving the list empty
+  if(!walletTokens.length){
+    const seen = new Set(), cands = [];
+    pools.forEach(p=>{ [p.token0,p.token1].forEach(t=>{
+      if(t&&t.addr){ const a=t.addr.toLowerCase(); if(!seen.has(a)){ seen.add(a); cands.push({addr:a, sym:t.sym, dec:t.dec}); } }
+    }); });
+    await Promise.all(cands.map(async t=>{
+      try{
+        const b = toBig(await ethCall(t.addr, SEL.balanceOf+padA(me)));
+        if(b>0n) walletTokens.push({addr:t.addr, sym:t.sym, dec:t.dec, _bal:b, _usd:(priceOf(t.addr)||0)*(Number(b)/10**t.dec)});
+      }catch(e){}
+    }));
+    if(account!==me) return;
+    tokenScanNote = walletTokens.length
+      ? (apiOK ? 'Explorer index looks stale — balances read straight from the chain.'
+               : 'Explorer unreachable — showing pool tokens read straight from the chain.')
+      : (apiOK ? '' : 'Token scan failed — explorer API unreachable. Use Other… to paste a token address.');
+  } else tokenScanNote = '';
+  // order: highest USD holding value first; unpriced tokens sink to the end (stable sort keeps prior order among them)
+  walletTokens.sort((a,b)=>b._usd-a._usd);
+  walletTokens = walletTokens.slice(0,12);
+  if(zapPool){ renderTokenSeg(); applyMode(); } // re-render the token selector with wallet tokens
 }
 
 /* ==========================================================================
@@ -656,6 +711,7 @@ function renderTokenSeg(){
     }catch(e){}
   });
   seg.appendChild(cb);
+  const note = $('tokenNote'); if(note) note.textContent = tokenScanNote;
   $('amtSym').textContent = '$'+(extToken?extToken.sym:(zapSide===0?sym0:sym1));
 }
 
