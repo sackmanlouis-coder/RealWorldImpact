@@ -367,6 +367,19 @@ const decI = word => { let v=BigInt('0x'+word); return v >= (1n<<255n) ? v-(1n<<
 const Q96 = 2n**96n, Q192 = 2n**192n;
 const TICK_LIMIT = 887272; // Uniswap v3 MIN/MAX tick
 const fullRangeTicks = spacing => [Math.ceil(-TICK_LIMIT/spacing)*spacing, Math.floor(TICK_LIMIT/spacing)*spacing];
+// ABI-encode NPM.multicall(bytes[]) — lets decrease + collect ride in ONE atomic transaction
+function encodeMulticall(calls){
+  const items = calls.map(c=>c.replace('0x',''));
+  let offsets='', body='';
+  let off = items.length*32; // first element's byte offset, measured from just after the length word
+  for(const it of items){
+    offsets += padU(off);
+    const padded = it + '0'.repeat((64 - it.length % 64) % 64);
+    body += padU(it.length/2) + padded;
+    off += 32 + padded.length/2;
+  }
+  return '0xac9650d8' + padU(0x20) + padU(items.length) + offsets + body; // multicall(bytes[]) — keccak-verified
+}
 const toBig = h => (!h || h==='0x') ? 0n : BigInt(h);
 function decStr(sel){ // decode string return (symbol)
   try{
@@ -401,6 +414,9 @@ async function rpc(method, params){
   throw new Error('all RPCs failed');
 }
 const ethCall = (to,data)=>rpc('eth_call',[{to,data},'latest']);
+// escape anything from third-party APIs or onchain strings before it touches innerHTML
+const esc = s => String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const isAddr = a => /^0x[0-9a-fA-F]{40}$/.test(a||'');
 function fmtUnits(x, dec, digits=4){
   x = BigInt(x); const base = 10n**BigInt(dec);
   const whole = x/base, frac = x%base;
@@ -747,19 +763,19 @@ function renderCards(){
     const card = document.createElement('div');
     card.className = 'card'+(selected===p.pair?' sel':'');
     card.innerHTML = `
-      <div class="pair">$${sym0} / $${sym1} <span class="tag">${(ds.dexId||'dex')+(ds.labels&&ds.labels.length?' '+ds.labels.join(','):'')}</span></div>
-      ${p.note?`<p class="desc">${p.note}</p>`:''}
+      <div class="pair">$${esc(sym0)} / $${esc(sym1)} <span class="tag">${esc((ds.dexId||'dex')+(ds.labels&&ds.labels.length?' '+ds.labels.join(','):''))}</span></div>
+      ${p.note?`<p class="desc">${esc(p.note)}</p>`:''}
       <div class="stats">
-        <div class="row"><span>Price</span><span>${ds.priceUsd?'$'+ds.priceUsd:'—'}</span></div>
+        <div class="row"><span>Price</span><span>${ds.priceUsd?'$'+esc(ds.priceUsd):'—'}</span></div>
         <div class="row"><span>Liquidity</span><span>${fmtUsd(ds.liquidity&&ds.liquidity.usd)}</span></div>
         <div class="row"><span>24h volume</span><span>${fmtUsd(ds.volume&&ds.volume.h24)}</span></div>
         <div class="row"><span>Est. fee APR</span><span>${(a=>a==null?'—':(a>=100?a.toFixed(0):a.toFixed(1))+'%')(feeApr(ds))}</span></div>
         <div class="row"><span>FDV</span><span>${fmtUsd(ds.fdv)}</span></div>
       </div>
-      <div class="vets">${vetChecks(p).map(v=>`<div class="${v.ok?'ok':'bad'}">${v.txt}</div>`).join('')}</div>
+      <div class="vets">${vetChecks(p).map(v=>`<div class="${v.ok?'ok':'bad'}">${esc(v.txt)}</div>`).join('')}</div>
       <div class="ext">
-        <a href="https://dexscreener.com/robinhood/${p.pair}" target="_blank" rel="noopener">Chart ↗</a>
-        <a href="https://robinhoodchain.blockscout.com/address/${p.pair}" target="_blank" rel="noopener">Explorer ↗</a>
+        <a href="https://dexscreener.com/robinhood/${esc(p.pair)}" target="_blank" rel="noopener">Chart ↗</a>
+        <a href="https://robinhoodchain.blockscout.com/address/${esc(p.pair)}" target="_blank" rel="noopener">Explorer ↗</a>
       </div>`;
     card.addEventListener('click', e=>{
       if(e.target.closest('a')) return;
@@ -816,7 +832,7 @@ function openZap(p, isV3plus){
   const uni = $('uniLink');
   uni.style.display = zappable ? 'none' : '';
   const outCur = (p.token0&&p.token0.addr) || (ds.baseToken&&ds.baseToken.address) || '';
-  uni.href = 'https://app.uniswap.org/swap?outputCurrency='+outCur+'&chain=robinhood';
+  uni.href = isAddr(outCur) ? 'https://app.uniswap.org/swap?outputCurrency='+outCur+'&chain=robinhood' : 'https://app.uniswap.org/?chain=robinhood';
   $('zapStatus').textContent = zappable
     ? (p.kind==='v3' ? 'v3 pool — zaps mint a FULL-RANGE position (never concentrated), so it behaves like classic LP: always in range, always earning.' : '')
     : (p.kind===null && p.token0 ? 'Unrecognized pool contract — the button opens Uniswap directly.'
@@ -950,8 +966,10 @@ async function syncPair(from){
     }
   }catch(e){}
 }
-$('amtIn').addEventListener('input', ()=>{ syncPair('A').then(updateQuote); });
-$('amtInB').addEventListener('input', ()=>{ syncPair('B').then(updateQuote); });
+let quoteTimer=null;
+const queueQuote = ()=>{ clearTimeout(quoteTimer); quoteTimer=setTimeout(updateQuote,250); }; // one quote per pause, not per keystroke
+$('amtIn').addEventListener('input', ()=>{ syncPair('A').then(queueQuote); });
+$('amtInB').addEventListener('input', ()=>{ syncPair('B').then(queueQuote); });
 $('slipSeg').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b)return;
   slipBps=Number(b.dataset.bps);
@@ -959,16 +977,22 @@ $('slipSeg').addEventListener('click',e=>{
   updateQuote();
 });
 
+let poolStateCache = {}; // pair -> {t, data} — 8s TTL; cleared after every sent transaction
+function cacheGet(key){ const c=poolStateCache[key]; return (c && Date.now()-c.t<8000) ? c.data : null; }
+function cachePut(key,data){ poolStateCache[key]={t:Date.now(),data}; return data; }
 async function getReserves(){
+  const key='r:'+zapPool.pair; const hit=cacheGet(key); if(hit) return hit;
   const h = await ethCall(zapPool.pair, SEL.getReserves);
   const d = h.replace('0x','');
-  return [BigInt('0x'+d.slice(0,64)), BigInt('0x'+d.slice(64,128))];
+  return cachePut(key,[BigInt('0x'+d.slice(0,64)), BigInt('0x'+d.slice(64,128))]);
 }
 // v3 pool state: sqrtPriceX96 + active-tick liquidity
-async function v3State(){
-  const [s, L] = await Promise.all([ethCall(zapPool.pair, SEL.slot0), ethCall(zapPool.pair, SEL.liquidity)]);
+async function v3State(pool){
+  const p = pool || zapPool;
+  const key='v3:'+p.pair; const hit=cacheGet(key); if(hit) return hit;
+  const [s, L] = await Promise.all([ethCall(p.pair, SEL.slot0), ethCall(p.pair, SEL.liquidity)]);
   const d = s.replace('0x','');
-  return { sqrtP: BigInt('0x'+d.slice(0,64)), tick: Number(decI(d.slice(64,128))), L: toBig(L) };
+  return cachePut(key,{ sqrtP: BigInt('0x'+d.slice(0,64)), tick: Number(decI(d.slice(64,128))), L: toBig(L) });
 }
 // spot-price output net of the pool fee — used as the slippage floor for the swap leg
 function v3SpotOut(amtIn, zeroForOne, sqrtP, fee){
@@ -1109,7 +1133,7 @@ async function sendTx(to, data, value){
   for(let i=0;i<60;i++){
     await new Promise(r=>setTimeout(r,2000));
     const rec = await rpc('eth_getTransactionReceipt',[hash]).catch(()=>null);
-    if(rec){ if(rec.status==='0x1') return hash; throw new Error('transaction reverted'); }
+    if(rec){ if(rec.status==='0x1'){ poolStateCache={}; return hash; } throw new Error('transaction reverted'); }
   }
   throw new Error('timed out waiting for receipt');
 }
@@ -1306,66 +1330,68 @@ async function loadPositions(){
   const tbl = $('posTable');
   [...tbl.querySelectorAll('.row:not(.head)')].forEach(r=>r.remove());
   if(!account){ tbl.insertAdjacentHTML('beforeend','<div class="row"><span>Connect a wallet to see LP positions.</span><span></span><span></span></div>'); return; }
-  let any=false;
-  for(const p of pools.values()){
+  const me = account; // if the account changes mid-load, stale results are dropped
+  const v2Rows = [], v3Rows = [];
+  const v2Scan = Promise.all([...pools.values()].map(async p=>{
     try{
       const [bal, sup] = await Promise.all([
-        ethCall(p.pair, SEL.balanceOf+padA(account)).then(toBig),
+        ethCall(p.pair, SEL.balanceOf+padA(me)).then(toBig),
         ethCall(p.pair, SEL.totalSupply).then(toBig)
       ]);
-      if(bal>0n && sup>0n){
-        any=true;
-        const share = Number(bal*1000000n/sup)/10000;
-        const ds=p.ds||{};
-        const s0=(p.token0&&p.token0.sym)||(ds.baseToken&&ds.baseToken.symbol)||'?';
-        const s1=(p.token1&&p.token1.sym)||(ds.quoteToken&&ds.quoteToken.symbol)||'?';
-        // underlying amounts from live reserves × share
-        let underTxt='';
-        try{
-          const h = await ethCall(p.pair, SEL.getReserves);
-          const dd = h.replace('0x','');
-          const r0=BigInt('0x'+dd.slice(0,64)), r1=BigInt('0x'+dd.slice(64,128));
-          const u0=r0*bal/sup, u1=r1*bal/sup;
-          const d0=(p.token0&&p.token0.dec)||18, d1=(p.token1&&p.token1.dec)||18;
-          underTxt = '<br><span style="opacity:.65;font-size:11px">~'+fmtUnits(u0,d0)+' $'+s0+' + '+fmtUnits(u1,d1)+' $'+s1+'</span>';
-        }catch(e){}
-        const liqUsd = ds.liquidity&&ds.liquidity.usd;
-        const usdTxt = liqUsd ? ' · ~$'+(liqUsd*share/100).toLocaleString('en-US',{maximumFractionDigits:2}) : '';
-        const canW = p.v2 && ROUTER_V2 && p.token0 && p.token1;
-        tbl.insertAdjacentHTML('beforeend',
-          `<div class="row" data-pair="${p.pair}">
-             <span>$${s0} / $${s1}${underTxt}</span>
-             <span>${fmtUnits(bal,18)}</span>
-             <span>${share.toFixed(4)}%${usdTxt}${canW?'<br><button class="wd pos-act" data-pair="'+p.pair+'">Withdraw</button><button class="uz pos-act" data-kind="v2" data-pair="'+p.pair+'">Unzap</button>':''}</span>
-           </div>`);
-      }
-    }catch(e){/* v3/v4 pool ids have no ERC20 balance — skip */}
-  }
-  // v3 positions — NFTs held via the NonfungiblePositionManager, matched to registry pools
-  try{
-    const nBal = Number(toBig(await ethCall(V3_NPM, SEL.balanceOf+padA(account))));
-    for(let i=0;i<Math.min(nBal,20);i++){
-      const id = toBig(await ethCall(V3_NPM, SEL.tokenOfOwnerByIndex+padA(account)+padU(i)));
-      const dd = (await ethCall(V3_NPM, SEL.positions+padU(id))).replace('0x','');
-      const w = j => dd.slice(j*64,(j+1)*64);
-      const tk0=('0x'+w(2).slice(24)).toLowerCase(), tk1=('0x'+w(3).slice(24)).toLowerCase();
-      const liq = BigInt('0x'+w(7));
-      if(liq<=0n) continue;
-      let match=null;
-      pools.forEach(p=>{ if(p.token0&&p.token1&&p.token0.addr.toLowerCase()===tk0&&p.token1.addr.toLowerCase()===tk1) match=p; });
-      if(!match) continue;
-      const lo=Number(decI(w(5))), hi=Number(decI(w(6)));
-      const full = lo<=-880000 && hi>=880000;
-      any=true;
-      tbl.insertAdjacentHTML('beforeend',
-        `<div class="row">
-           <span>$${match.token0.sym} / $${match.token1.sym}<br><span style="opacity:.65;font-size:11px">v3 ${full?'full range':'range ['+lo+', '+hi+']'} · NFT #${id}</span></span>
+      if(bal<=0n || sup<=0n) return;
+      const share = Number(bal*1000000n/sup)/10000;
+      const ds=p.ds||{};
+      const s0=(p.token0&&p.token0.sym)||(ds.baseToken&&ds.baseToken.symbol)||'?';
+      const s1=(p.token1&&p.token1.sym)||(ds.quoteToken&&ds.quoteToken.symbol)||'?';
+      let underTxt='';
+      try{
+        const dd = (await ethCall(p.pair, SEL.getReserves)).replace('0x','');
+        const r0=BigInt('0x'+dd.slice(0,64)), r1=BigInt('0x'+dd.slice(64,128));
+        const u0=r0*bal/sup, u1=r1*bal/sup;
+        const d0=(p.token0&&p.token0.dec)||18, d1=(p.token1&&p.token1.dec)||18;
+        underTxt = '<br><span style="opacity:.65;font-size:11px">~'+fmtUnits(u0,d0)+' $'+esc(s0)+' + '+fmtUnits(u1,d1)+' $'+esc(s1)+'</span>';
+      }catch(e){}
+      const liqUsd = ds.liquidity&&ds.liquidity.usd;
+      const usdTxt = liqUsd ? ' \u00b7 ~$'+(liqUsd*share/100).toLocaleString('en-US',{maximumFractionDigits:2}) : '';
+      const canW = p.kind==='v2' && ROUTER_V2 && p.token0 && p.token1;
+      v2Rows.push(`<div class="row" data-pair="${p.pair}">
+         <span>$${esc(s0)} / $${esc(s1)}${underTxt}</span>
+         <span>${fmtUnits(bal,18)}</span>
+         <span>${share.toFixed(4)}%${usdTxt}${canW?'<br><button class="wd pos-act" data-pair="'+p.pair+'">Withdraw</button><button class="uz pos-act" data-kind="v2" data-pair="'+p.pair+'">Unzap</button>':''}</span>
+       </div>`);
+    }catch(e){/* v3 pool contracts have no ERC20 balanceOf \u2014 skip */}
+  }));
+  const v3Scan = (async()=>{
+    try{
+      const nBal = Number(toBig(await ethCall(V3_NPM, SEL.balanceOf+padA(me))));
+      const idxs = Array.from({length:Math.min(nBal,20)}, (_,i)=>i);
+      const ids = await Promise.all(idxs.map(i=>ethCall(V3_NPM, SEL.tokenOfOwnerByIndex+padA(me)+padU(i)).then(toBig).catch(()=>null)));
+      const poss = await Promise.all(ids.map(id=>id==null?null:ethCall(V3_NPM, SEL.positions+padU(id)).then(h=>({id, dd:h.replace('0x','')})).catch(()=>null)));
+      for(const pos of poss){
+        if(!pos) continue;
+        const {id, dd} = pos;
+        const w = j => dd.slice(j*64,(j+1)*64);
+        const tk0=('0x'+w(2).slice(24)).toLowerCase(), tk1=('0x'+w(3).slice(24)).toLowerCase();
+        const liq = BigInt('0x'+w(7));
+        if(liq<=0n) continue;
+        let match=null;
+        pools.forEach(p=>{ if(p.token0&&p.token1&&p.token0.addr.toLowerCase()===tk0&&p.token1.addr.toLowerCase()===tk1) match=p; });
+        if(!match) continue;
+        const lo=Number(decI(w(5))), hi=Number(decI(w(6)));
+        const full = lo<=-880000 && hi>=880000;
+        v3Rows.push(`<div class="row">
+           <span>$${esc(match.token0.sym)} / $${esc(match.token1.sym)}<br><span style="opacity:.65;font-size:11px">v3 ${full?'full range':'range ['+lo+', '+hi+']'} \u00b7 NFT #${id}</span></span>
            <span>liq ${liq.toLocaleString('en-US')}</span>
-           <span><a href="https://app.uniswap.org/positions" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--rule);text-decoration:none">Manage ↗</a>${full?'<br><button class="uz pos-act" data-kind="v3" data-pair="'+match.pair+'" data-id="'+id+'" data-liq="'+liq+'">Unzap</button>':''}</span>
+           <span><a href="https://app.uniswap.org/positions" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--rule);text-decoration:none">Manage \u2197</a>${full?'<br><button class="uz pos-act" data-kind="v3" data-pair="'+match.pair+'" data-id="'+id+'" data-liq="'+liq+'">Unzap</button>':''}</span>
          </div>`);
-    }
-  }catch(e){/* NPM unreachable or none held */}
-  if(!any) tbl.insertAdjacentHTML('beforeend','<div class="row"><span>No LP balances found in registry pools.</span><span></span><span></span></div>');
+      }
+    }catch(e){/* NPM unreachable or none held */}
+  })();
+  await Promise.all([v2Scan, v3Scan]);
+  if(account!==me) return;
+  [...tbl.querySelectorAll('.row:not(.head)')].forEach(r=>r.remove());
+  const rows = v2Rows.concat(v3Rows);
+  tbl.insertAdjacentHTML('beforeend', rows.length ? rows.join('') : '<div class="row"><span>No LP balances found in registry pools.</span><span></span><span></span></div>');
 }
 
 // ==========================================================================
@@ -1435,22 +1461,26 @@ $('uzBtn').addEventListener('click', async ()=>{
     }else{
       const liqPart = unzap.liq*BigInt(uzPct)/100n;
       if(liqPart<=0n) throw new Error('nothing to unzap');
-      const {sqrtP} = await (async()=>{ const s=(await ethCall(p.pair,SEL.slot0)).replace('0x',''); return {sqrtP:BigInt('0x'+s.slice(0,64))}; })();
+      const {sqrtP} = await v3State(p);
       // full-range expected amounts (sqrtLo≈0, sqrtHi≈∞ — exact to ~1e-9 for full-range positions)
       const e0 = liqPart*Q96/sqrtP, e1 = liqPart*sqrtP/Q96;
       const min0 = e0*slip/10000n, min1 = e1*slip/10000n;
-      st.textContent='Decrease liquidity in your wallet…';
-      await sendTx(V3_NPM, SEL.decreaseLiquidity + padU(unzap.id)+padU(liqPart)+padU(min0)+padU(min1)+padU(deadline));
-      st.textContent='Collect tokens in your wallet…';
-      hOut = await sendTx(V3_NPM, SEL.collect + padU(unzap.id)+padA(account)+padU(MAX128)+padU(MAX128));
+      st.textContent='Withdraw + collect (one transaction) in your wallet…';
+      hOut = await sendTx(V3_NPM, encodeMulticall([
+        SEL.decreaseLiquidity + padU(unzap.id)+padU(liqPart)+padU(min0)+padU(min1)+padU(deadline),
+        SEL.collect + padU(unzap.id)+padA(account)+padU(MAX128)+padU(MAX128)
+      ]));
     }
-    // measure what actually arrived, then consolidate into the chosen token
+    // measure what actually arrived, then consolidate into the chosen token.
+    // The removal has already succeeded — if anything below fails, the tokens are
+    // simply sitting in the wallet as both sides, and we say exactly that.
     const g0 = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account))) - b0;
     const g1 = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account))) - b1;
     const gotOth = tOth===t0?g0:g1;
     let gotTgt = tTgt===t0?g0:g1;
     let hSwap = null;
-    if(gotOth>0n){
+    try{
+      if(gotOth>0n){
       if(unzap.kind==='v2'){
         const rh=(await ethCall(p.pair, SEL.getReserves)).replace('0x','');
         const r0=BigInt('0x'+rh.slice(0,64)), r1=BigInt('0x'+rh.slice(64,128));
@@ -1465,8 +1495,7 @@ $('uzBtn').addEventListener('click', async ()=>{
           + padU(2)+padA(tOth.addr)+padA(tTgt.addr));
         gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
       }else{
-        const s=(await ethCall(p.pair,SEL.slot0)).replace('0x','');
-        const sqrtP=BigInt('0x'+s.slice(0,64));
+        const {sqrtP} = await v3State(p); // cache was cleared by the withdrawal tx — this is post-removal state
         const zeroForOne = tOth.addr.toLowerCase()===t0.addr.toLowerCase();
         const minOut = v3SpotOut(gotOth, zeroForOne, sqrtP, p.fee)*slip/10000n;
         const al = toBig(await ethCall(tOth.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
@@ -1477,14 +1506,18 @@ $('uzBtn').addEventListener('click', async ()=>{
           + padA(tOth.addr)+padA(tTgt.addr)+padU(p.fee)+padA(account)+padU(gotOth)+padU(minOut)+padU(0));
         gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
       }
-    }
-    let hUnwrap = null;
-    if(uzChoice==='ETH' && gotTgt>0n){
-      st.textContent='Unwrap WETH → ETH in your wallet…';
-      hUnwrap = await sendTx(CANON_WETH, SEL.wethWithdraw+padU(gotTgt));
+      }
+      if(uzChoice==='ETH' && gotTgt>0n){
+        st.textContent='Unwrap WETH → ETH in your wallet…';
+        var hUnwrap = await sendTx(CANON_WETH, SEL.wethWithdraw+padU(gotTgt));
+      }
+    }catch(swapErr){
+      st.innerHTML='Removed ✓ '+txLink(hOut)+' — the consolidation swap didn\'t complete, but both $'+esc(t0.sym)+' and $'+esc(t1.sym)+' are already safely in your wallet.';
+      refreshBalance(); loadPositions(); loadWalletTokens();
+      return;
     }
     const sym = uzChoice==='ETH' ? 'ETH' : tTgt.sym;
-    st.innerHTML='Unzapped ✓ ~'+fmtUnits(gotTgt, tTgt.dec)+' $'+sym+' — '+txLink(hOut)
+    st.innerHTML='Unzapped ✓ ~'+fmtUnits(gotTgt, tTgt.dec)+' $'+esc(sym)+' — '+txLink(hOut)
       +(hSwap?' · swap '+txLink(hSwap):'')+(hUnwrap?' · unwrap '+txLink(hUnwrap):'');
     refreshBalance(); loadPositions(); loadWalletTokens();
   }catch(err){
