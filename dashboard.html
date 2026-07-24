@@ -994,10 +994,19 @@ async function v3State(pool){
   const d = s.replace('0x','');
   return cachePut(key,{ sqrtP: BigInt('0x'+d.slice(0,64)), tick: Number(decI(d.slice(64,128))), L: toBig(L) });
 }
-// spot-price output net of the pool fee — used as the slippage floor for the swap leg
-function v3SpotOut(amtIn, zeroForOne, sqrtP, fee){
-  const gross = zeroForOne ? amtIn*sqrtP*sqrtP/Q192 : amtIn*Q192/(sqrtP*sqrtP);
-  return gross*BigInt(1000000-fee)/1000000n;
+// exact-in v3 swap output within the active tick, INCLUDING size impact — not spot price.
+// Assumes constant liquidity across the traversed range, which is exact when the pool's
+// liquidity is full-range (as everything this dashboard mints is).
+function v3ExactOut(amtIn, zeroForOne, sqrtP, L, fee){
+  if(L<=0n || sqrtP<=0n || amtIn<=0n) return 0n;
+  const net = amtIn*BigInt(1000000-fee)/1000000n;
+  if(zeroForOne){ // token0 in — price falls
+    const S2 = L*Q96*sqrtP/(L*Q96 + net*sqrtP);
+    return L*(sqrtP - S2)/Q96;
+  }else{          // token1 in — price rises
+    const S2 = sqrtP + net*Q96/L;
+    return L*Q96*(S2 - sqrtP)/(sqrtP*S2);
+  }
 }
 // probe the router for a path quote; reverts (missing pair) resolve to null
 async function amountsOut(amtIn, path){
@@ -1058,7 +1067,7 @@ async function quoteV3(){
   const zeroForOne = (t.addr||'').toLowerCase()===t0.addr.toLowerCase();
   const other = zeroForOne?t1:t0, kept = zeroForOne?t0:t1;
   const s = amt/2n; // full-range positions want ~equal value on both sides
-  const out = v3SpotOut(s, zeroForOne, sqrtP, zapPool.fee);
+  const out = v3ExactOut(s, zeroForOne, sqrtP, L, zapPool.fee);
   const wrap = !!t.native;
   $('qSwap').textContent=(wrap?'wrap → ':'')+fmtUnits(s,t.dec)+' $'+(wrap?'ETH':t.sym)+' → ~'+fmtUnits(out,other.dec)+' $'+other.sym;
   $('qDep').textContent='~'+fmtUnits(amt-s,t.dec)+' $'+kept.sym+' + ~'+fmtUnits(out,other.dec)+' $'+other.sym;
@@ -1125,9 +1134,24 @@ async function updateQuote(){
   }
 }
 
+// Simulate before signing — a transaction that a simulation says will revert is never
+// shown to the wallet. Only genuine revert signals block; transport hiccups never do.
+async function preflight(tx){
+  if(wallet && walletOnChain){
+    try{ await wallet.request({method:'eth_call', params:[tx,'latest']}); return; }
+    catch(e){
+      const msg = String((e && ((e.data&&e.data.message)||e.message)) || '');
+      if(e && e.code===3 || /revert|slippage|too little|too much|insufficient|expired|liquidity|stf/i.test(msg))
+        throw new Error('would revert onchain — not sent for signing'+(msg?' ('+msg.slice(0,120)+')':''));
+      return; // transport error, not a revert — don't block the user
+    }
+  }
+  try{ await rpc('eth_call',[tx,'latest']); }catch(e){/* public RPCs can't distinguish outage from revert — don't block */}
+}
 async function sendTx(to, data, value){
   const tx = {from:account, to, data};
   if(value!=null && BigInt(value)>0n) tx.value = '0x'+BigInt(value).toString(16);
+  await preflight(tx);
   const hash = await wallet.request({method:'eth_sendTransaction', params:[tx]});
   // wait for receipt
   for(let i=0;i<60;i++){
@@ -1176,9 +1200,9 @@ async function execZapV3(st){
   const t0=zapPool.token0, t1=zapPool.token1;
   const zeroForOne = t.addr.toLowerCase()===t0.addr.toLowerCase();
   const tIn = zeroForOne?t0:t1, tOut = zeroForOne?t1:t0;
-  const {sqrtP} = await v3State();
+  const {sqrtP, L} = await v3State();
   const s = amt/2n;
-  const minOut = v3SpotOut(s, zeroForOne, sqrtP, zapPool.fee)*(10000n-BigInt(slipBps))/10000n;
+  const minOut = v3ExactOut(s, zeroForOne, sqrtP, L, zapPool.fee)*(10000n-BigInt(slipBps))/10000n;
   // 1. approve + swap half
   const al = toBig(await ethCall(tIn.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
   if(al < s){ st.textContent='Approve $'+tIn.sym+' for the router in your wallet…'; await sendTx(tIn.addr, SEL.approve+padA(V3_ROUTER)+padU(s)); }
@@ -1495,9 +1519,9 @@ $('uzBtn').addEventListener('click', async ()=>{
           + padU(2)+padA(tOth.addr)+padA(tTgt.addr));
         gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
       }else{
-        const {sqrtP} = await v3State(p); // cache was cleared by the withdrawal tx — this is post-removal state
+        const {sqrtP, L} = await v3State(p); // cache was cleared by the withdrawal tx — this is post-removal state
         const zeroForOne = tOth.addr.toLowerCase()===t0.addr.toLowerCase();
-        const minOut = v3SpotOut(gotOth, zeroForOne, sqrtP, p.fee)*slip/10000n;
+        const minOut = v3ExactOut(gotOth, zeroForOne, sqrtP, L, p.fee)*slip/10000n;
         const al = toBig(await ethCall(tOth.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
         if(al<gotOth){ st.textContent='Approve $'+tOth.sym+' in your wallet…'; await sendTx(tOth.addr, SEL.approve+padA(V3_ROUTER)+padU(gotOth)); }
         st.textContent='Swap $'+tOth.sym+' → $'+tTgt.sym+' in your wallet…';
