@@ -71,6 +71,7 @@
     display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
     font-family:var(--mono);font-size:12.5px;letter-spacing:.06em;
   }
+  .wallet-menu{display:none;flex-wrap:wrap;gap:8px;padding:10px 0;border-bottom:1px solid var(--rule)}
   .btn{
     font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;
     background:var(--ink);color:var(--lime);border:1px solid var(--ink);
@@ -195,9 +196,12 @@
       <p class="eyebrow">Zap</p>
       <div class="wallet-bar">
         <button class="btn" id="connectBtn">Connect wallet</button>
+        <button class="btn ghost" id="switchBtn" style="display:none">Switch</button>
+        <button class="btn ghost" id="disconnectBtn" style="display:none">Disconnect</button>
         <span id="walletInfo"></span>
         <span id="chainChip"></span>
       </div>
+      <div class="wallet-menu" id="walletMenu"></div>
       <h2 id="zapTitle" style="margin-top:18px">Select a pool above to begin.</h2>
       <div class="zap-body" id="zapBody" style="display:none">
         <div>
@@ -382,30 +386,38 @@ window.dispatchEvent(new Event('eip6963:requestProvider'));
 let wallet = null, account = null;
 const $ = id => document.getElementById(id);
 
-async function connect(){
+let chosenProvider = null; // the EIP-6963 detail currently in use
+function providerList(){
   window.dispatchEvent(new Event('eip6963:requestProvider')); // catch late-injecting wallets
-  const p = (providers[0] && providers[0].provider) || window.ethereum;
-  if(!p){ $('walletInfo').textContent = 'No wallet found — install one to zap.'; return; }
+  const list = providers.slice();
+  if(!list.length && window.ethereum) list.push({info:{name:'Browser wallet', rdns:'window.ethereum'}, provider:window.ethereum});
+  return list;
+}
+function walletLabel(){ return (chosenProvider && chosenProvider.info && chosenProvider.info.name) ? chosenProvider.info.name+' · ' : ''; }
+function setAccount(a){
+  account = a || null;
+  extToken = null; walletTokens = []; // any previous account's tokens and balances are stale
+  $('walletInfo').textContent = account ? walletLabel()+account.slice(0,6)+'…'+account.slice(-4) : '';
+  $('connectBtn').style.display = account ? 'none' : '';
+  $('switchBtn').style.display = account ? '' : 'none';
+  $('disconnectBtn').style.display = account ? '' : 'none';
+  refreshBalance(); loadPositions();
+  if(account) loadWalletTokens();
+  else if(zapPool){ renderTokenSeg(); applyMode(); }
+}
+async function connectWith(d){
+  const p = d.provider;
   try{
     const accts = await p.request({method:'eth_requestAccounts'});
     if(!accts || !accts[0]) throw {code:4001};
-    wallet = p; account = accts[0];
-    $('walletInfo').textContent = account.slice(0,6)+'…'+account.slice(-4);
-    $('connectBtn').textContent = 'Connected';
+    wallet = p; chosenProvider = d;
+    try{ localStorage.setItem('rwi_wallet_rdns', (d.info&&d.info.rdns)||'window.ethereum'); }catch(e){}
+    setAccount(accts[0]);
     await ensureChain();
-    refreshBalance(); loadPositions(); loadWalletTokens();
     if(p.on && !p._rwiBound){
-      p._rwiBound = true; // bind once — reconnect clicks must not stack duplicate listeners
-      p.on('accountsChanged', a=>{
-        account = (a && a[0]) || null;
-        extToken = null; walletTokens = []; // old account's tokens and balances are stale
-        $('walletInfo').textContent = account ? account.slice(0,6)+'…'+account.slice(-4) : '';
-        $('connectBtn').textContent = account ? 'Connected' : 'Connect wallet';
-        refreshBalance(); loadPositions();
-        if(account) loadWalletTokens();
-        else if(zapPool){ renderTokenSeg(); applyMode(); }
-      });
-      p.on('chainChanged', ()=>updateChainChip()); // passive — never prompt a switch uninvited; zapBtn enforces the chain at send time
+      p._rwiBound = true; // bind once per provider — reconnects must not stack duplicate listeners
+      p.on('accountsChanged', a=>{ if(p!==wallet) return; setAccount((a&&a[0])||null); });
+      p.on('chainChanged', ()=>{ if(p!==wallet) return; updateChainChip(); }); // passive — zapBtn enforces the chain at send time
     }
   }catch(e){
     $('walletInfo').textContent =
@@ -413,6 +425,59 @@ async function connect(){
       e && e.code === 4001  ? 'Connection declined.' : 'Connection failed.';
   }
 }
+function renderWalletMenu(list, withAccountOption){
+  const m = $('walletMenu'); m.innerHTML='';
+  if(withAccountOption && wallet){
+    const b=document.createElement('button'); b.className='btn ghost';
+    b.textContent='Same wallet · different account';
+    b.addEventListener('click',()=>{ m.style.display='none'; switchAccounts(); });
+    m.appendChild(b);
+  }
+  list.forEach(d=>{
+    const b=document.createElement('button'); b.className='btn ghost';
+    b.textContent=(d.info&&d.info.name)||'Wallet';
+    b.addEventListener('click',()=>{ m.style.display='none'; connectWith(d); });
+    m.appendChild(b);
+  });
+  m.style.display='flex';
+}
+async function connect(){
+  const list = providerList();
+  if(!list.length){ $('walletInfo').textContent = 'No wallet found — install one to zap.'; return; }
+  if(list.length===1) return connectWith(list[0]);
+  renderWalletMenu(list, false); // more than one wallet installed — the user picks, never providers[0]
+}
+async function switchAccounts(){
+  if(!wallet) return connect();
+  try{ // re-open the wallet's account picker where supported (MetaMask et al.)
+    await wallet.request({method:'wallet_requestPermissions', params:[{eth_accounts:{}}]});
+  }catch(e){ if(e && e.code===4001) return; /* declined — keep current account */ }
+  try{
+    const accts = await wallet.request({method:'eth_requestAccounts'});
+    if(accts && accts[0]) setAccount(accts[0]);
+  }catch(e){}
+}
+async function disconnect(){
+  try{ wallet && await wallet.request({method:'wallet_revokePermissions', params:[{eth_accounts:{}}]}); }catch(e){/* not all wallets support revoke */}
+  wallet = null; chosenProvider = null; walletOnChain = false;
+  try{ localStorage.removeItem('rwi_wallet_rdns'); }catch(e){}
+  $('chainChip').innerHTML=''; $('walletMenu').style.display='none';
+  $('connectBtn').textContent='Connect wallet';
+  setAccount(null);
+}
+// session resume — only the wallet the user chose last time, never whichever announced first
+(async function resume(){
+  await new Promise(r=>setTimeout(r,300)); // let EIP-6963 announcements land
+  let saved=null; try{ saved=localStorage.getItem('rwi_wallet_rdns'); }catch(e){}
+  if(!saved) return;
+  const d = providers.find(x=>x.info && x.info.rdns===saved)
+    || (saved==='window.ethereum' && window.ethereum ? {info:{name:'Browser wallet', rdns:'window.ethereum'}, provider:window.ethereum} : null);
+  if(!d) return;
+  try{
+    const accts = await d.provider.request({method:'eth_accounts'});
+    if(accts && accts[0]) connectWith(d); // already authorized — resolves with no prompt
+  }catch(e){}
+})();
 async function updateChainChip(){
   if(!wallet) return;
   try{
@@ -422,16 +487,6 @@ async function updateChainChip(){
     $('chainChip').innerHTML = walletOnChain ? '<span class="chip">Robinhood Chain</span>' : '<span class="chip warn">Wrong network</span>';
   }catch(e){}
 }
-// silent session resume — if the wallet already authorized this site, restore without a prompt
-(async function resume(){
-  await new Promise(r=>setTimeout(r,200)); // let EIP-6963 announcements land
-  const p = (providers[0] && providers[0].provider) || window.ethereum;
-  if(!p || !p.request) return;
-  try{
-    const accts = await p.request({method:'eth_accounts'});
-    if(accts && accts[0]) connect(); // already authorized — resolves with no prompt
-  }catch(e){}
-})();
 // boot-time RPC health probe — if the public RPCs are unreachable from this browser,
 // say so instead of quietly showing dashes and zeros
 (async function rpcHealth(){
@@ -470,6 +525,12 @@ function retryOnchain(){
   refreshBalance(); loadPositions();
 }
 $('connectBtn').addEventListener('click', connect);
+$('switchBtn').addEventListener('click', ()=>{
+  const list = providerList();
+  if(list.length>1) renderWalletMenu(list, true); // other wallets exist — offer them plus same-wallet account switch
+  else switchAccounts();
+});
+$('disconnectBtn').addEventListener('click', disconnect);
 
 // derive canonical WETH from the trusted main pool
 async function deriveWeth(){
@@ -721,9 +782,10 @@ function renderTokenSeg(){
     seg.appendChild(b);
   });
   walletTokens.filter(w=>!isPoolToken(w.addr)).forEach(w=>{
-    const b=document.createElement('button'); b.textContent='$'+w.sym;
+    const b=document.createElement('button');
+    b.textContent = '$'+w.sym+' · '+fmtUnits(w._bal, w.dec, 2)+(w._usd>0?' (~$'+w._usd.toLocaleString('en-US',{maximumFractionDigits:0})+')':'');
     b.className = (extToken&&extToken.addr===w.addr)?'on':'';
-    b.title = w._usd>0 ? 'zap from wallet balance — ~$'+w._usd.toLocaleString('en-US',{maximumFractionDigits:2}) : 'zap from wallet balance';
+    b.title = 'zap from wallet balance';
     b.addEventListener('click',()=>{extToken=w;openZap(p,isV3plus)});
     seg.appendChild(b);
   });
