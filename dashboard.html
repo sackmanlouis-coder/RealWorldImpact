@@ -1131,6 +1131,11 @@ async function runConvert(conv, amt, st){
 // exact-in v3 swap output within the active tick, INCLUDING size impact — not spot price.
 // Assumes constant liquidity across the traversed range, which is exact when the pool's
 // liquidity is full-range (as everything this dashboard mints is).
+function v3NextSqrtP(amtIn, zeroForOne, sqrtP, L, fee){
+  if(L<=0n || sqrtP<=0n || amtIn<=0n) return sqrtP;
+  const net = amtIn*BigInt(1000000-fee)/1000000n;
+  return zeroForOne ? L*Q96*sqrtP/(L*Q96 + net*sqrtP) : sqrtP + net*Q96/L;
+}
 function v3ExactOut(amtIn, zeroForOne, sqrtP, L, fee){
   if(L<=0n || sqrtP<=0n || amtIn<=0n) return 0n;
   const net = amtIn*BigInt(1000000-fee)/1000000n;
@@ -1410,21 +1415,46 @@ async function execZapV3(st){
     if(alN < need){ st.textContent='Approve $'+tk.sym+' for the position manager…'; await sendTx(tk.addr, SEL.approve+padA(V3_NPM)+padU(need)); }
   }
   // 3. mint the FULL-RANGE position
+  // 3. mint / increase — mins computed against POST-swap state read fresh from the pool,
+  // and capped to what we actually hold, so the NPM's Price slippage check can't revert.
   const [lo,hi] = fullRangeTicks(zapPool.tickSpacing);
-  const m0 = a0*(10000n-BigInt(slipBps))/10000n, m1 = a1*(10000n-BigInt(slipBps))/10000n;
+  const sqrtLo = sqrtRatioAtTick(lo), sqrtHi = sqrtRatioAtTick(hi);
+  // re-read live sqrtPriceX96 straight from the pool contract, uncached — the swap moved it
+  const factoryPool = ('0x'+(await ethCall(V3_FACTORY, SEL.getPool+padA(t0.addr)+padA(t1.addr)+padU(zapPool.fee))).slice(-40)).toLowerCase();
+  const Snow = BigInt('0x'+(await ethCall(factoryPool, SEL.slot0)).replace('0x','').slice(0,64));
+  // measure what we ACTUALLY hold, don't trust the arithmetic estimates from the swap step
+  const b0now = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account)));
+  const b1now = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account)));
+  const have0 = b0now < a0 ? b0now : a0, have1 = b1now < a1 ? b1now : a1;
   st.textContent='Checking for an existing position…';
   const existing = await findMatchingPosition(t0, t1, zapPool.fee, lo, hi);
+  const buildMint = bps => {
+    const bpsN = BigInt(bps);
+    // derive the mint's own expected split from the live post-swap price (Uniswap ratio),
+    // clipped to our balances — this is what the NPM will actually see
+    const [rq0, rq1] = rangeAmounts(1n, Snow, sqrtLo, sqrtHi);
+    let use0 = have0, use1 = have1;
+    if(rq0>0n && rq1>0n){
+      const cap1 = have0*rq1/rq0; // how much side1 is needed for our side0 amount
+      if(cap1 < use1) use1 = cap1; else use0 = have1*rq0/rq1;
+    }else if(rq0===0n){ use0 = 0n; }
+    else{ use1 = 0n; }
+    const m0 = use0*(10000n-bpsN)/10000n, m1 = use1*(10000n-bpsN)/10000n;
+    return existing
+      ? SEL.increaseLiquidity + padU(existing.id) + padU(use0) + padU(use1) + padU(m0) + padU(m1) + padU(deadline)
+      : SEL.mint + padA(t0.addr) + padA(t1.addr) + padU(zapPool.fee) + padI(lo) + padI(hi)
+        + padU(use0) + padU(use1) + padU(m0) + padU(m1) + padA(account) + padU(deadline);
+  };
+  st.textContent='Checking the mint…';
+  const mintData = await preflightMins(V3_NPM, buildMint);
   let h2;
   if(existing){
     st.textContent='Add to position #'+existing.id+' in your wallet…';
-    h2 = await sendTx(V3_NPM, SEL.increaseLiquidity
-      + padU(existing.id) + padU(a0) + padU(a1) + padU(m0) + padU(m1) + padU(deadline));
+    h2 = await sendTx(V3_NPM, mintData);
     st.innerHTML='Zapped ✓ added to your existing FULL-RANGE position #'+existing.id+' — swap '+txLink(h1)+' · add '+txLink(h2)+' — one position, growing.';
   }else{
     st.textContent='Mint full-range position in your wallet…';
-    h2 = await sendTx(V3_NPM, SEL.mint
-      + padA(t0.addr) + padA(t1.addr) + padU(zapPool.fee) + padI(lo) + padI(hi)
-      + padU(a0) + padU(a1) + padU(m0) + padU(m1) + padA(account) + padU(deadline));
+    h2 = await sendTx(V3_NPM, mintData);
     st.innerHTML='Zapped ✓ FULL RANGE — swap '+txLink(h1)+' · mint '+txLink(h2)+' — always in range, always earning.';
   }
   refreshBalance(); loadPositions();
@@ -1441,20 +1471,37 @@ async function execPairV3(st){
     if(al < need){ st.textContent='Approve $'+tk.sym+' for the position manager…'; await sendTx(tk.addr, SEL.approve+padA(V3_NPM)+padU(need)); }
   }
   const [lo,hi] = fullRangeTicks(zapPool.tickSpacing);
-  const mA = a*(10000n-BigInt(slipBps))/10000n, mB = b*(10000n-BigInt(slipBps))/10000n;
+  const sqrtLo = sqrtRatioAtTick(lo), sqrtHi = sqrtRatioAtTick(hi);
+  const factoryPool = ('0x'+(await ethCall(V3_FACTORY, SEL.getPool+padA(t0.addr)+padA(t1.addr)+padU(zapPool.fee))).slice(-40)).toLowerCase();
+  const Snow = BigInt('0x'+(await ethCall(factoryPool, SEL.slot0)).replace('0x','').slice(0,64));
   st.textContent='Checking for an existing position…';
   const existing = await findMatchingPosition(t0, t1, zapPool.fee, lo, hi);
+  const buildPair = bps => {
+    const bpsN = BigInt(bps);
+    // clip typed amounts to the live pool ratio — user can't overshoot one side
+    const [rq0, rq1] = rangeAmounts(1n, Snow, sqrtLo, sqrtHi);
+    let use0 = a, use1 = b;
+    if(rq0>0n && rq1>0n){
+      const cap1 = a*rq1/rq0;
+      if(cap1 < use1) use1 = cap1; else use0 = b*rq0/rq1;
+    }else if(rq0===0n){ use0 = 0n; }
+    else{ use1 = 0n; }
+    const mA = use0*(10000n-bpsN)/10000n, mB = use1*(10000n-bpsN)/10000n;
+    return existing
+      ? SEL.increaseLiquidity + padU(existing.id) + padU(use0) + padU(use1) + padU(mA) + padU(mB) + padU(deadline)
+      : SEL.mint + padA(t0.addr) + padA(t1.addr) + padU(zapPool.fee) + padI(lo) + padI(hi)
+        + padU(use0) + padU(use1) + padU(mA) + padU(mB) + padA(account) + padU(deadline);
+  };
+  st.textContent='Checking the mint…';
+  const mintData = await preflightMins(V3_NPM, buildPair);
   let h;
   if(existing){
     st.textContent='Add to position #'+existing.id+' in your wallet…';
-    h = await sendTx(V3_NPM, SEL.increaseLiquidity
-      + padU(existing.id) + padU(a) + padU(b) + padU(mA) + padU(mB) + padU(deadline));
+    h = await sendTx(V3_NPM, mintData);
     st.innerHTML='Liquidity added ✓ to your existing FULL-RANGE position #'+existing.id+' '+txLink(h)+' — one position, growing.';
   }else{
     st.textContent='Mint full-range position in your wallet…';
-    h = await sendTx(V3_NPM, SEL.mint
-      + padA(t0.addr) + padA(t1.addr) + padU(zapPool.fee) + padI(lo) + padI(hi)
-      + padU(a) + padU(b) + padU(mA) + padU(mB) + padA(account) + padU(deadline));
+    h = await sendTx(V3_NPM, mintData);
     st.innerHTML='Liquidity added ✓ FULL RANGE '+txLink(h)+' — fees accrue across the entire range.';
   }
   refreshBalance(); loadPositions();
