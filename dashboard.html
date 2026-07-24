@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0B0B09">
 <title>Pools · Real World Impact</title>
 <meta name="description" content="Robinhood Chain liquidity pools — zap a single token into a double-sided LP and earn trading fees.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2064%2064%27%3E%3Crect%20width%3D%2764%27%20height%3D%2764%27%20fill%3D%27%23CCFE06%27%2F%3E%3Ctext%20x%3D%2732%27%20y%3D%2743%27%20text-anchor%3D%27middle%27%20font-family%3D%27IBM%20Plex%20Mono%2Cui-monospace%2Cmonospace%27%20font-size%3D%2725%27%20font-weight%3D%27700%27%20letter-spacing%3D%27-1%27%20fill%3D%27%230B0B09%27%3ERWI%3C%2Ftext%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
@@ -304,8 +305,8 @@ let CANON_WETH = null;
 const REGISTRY = [
   { pair:'0xff6aa24815d1274a9be0cfd17c7c7489cd40a697', note:'RWI main pool — fees fund the donations.', v2:false },
   { pair:'0x62a9e7cf94049dded854c26ff6204079a1c8caed', note:'RWI earn-and-burn pool — project fees burned in full.', v2:false },
-  { pair:'0xd53cC9Fb4E73ED216046F827A8a32F2fA31d5eFF', note:'$BURGERS pool.', v2:false },
   { pair:'0xeb1bb09e2906773F1227C920A622aFcd9e068c29', note:'$USDG / $RWI pool.', v2:false },
+  { pair:'0xd53cC9Fb4E73ED216046F827A8a32F2fA31d5eFF', note:'$BURGERS pool.', v2:false },
   // { pair:'0x…', note:'USDG/WETH', v2:false },
 ];
 
@@ -363,25 +364,62 @@ function sqrtBig(v){ if(v<2n)return v; let x=v, y=(x+1n)/2n; while(y<x){x=y;y=(x
    Wallet — EIP-6963 discovery with window.ethereum fallback
    ========================================================================== */
 const providers = [];
-window.addEventListener('eip6963:announceProvider', e => providers.push(e.detail));
+window.addEventListener('eip6963:announceProvider', e => {
+  const d = e.detail;
+  if(!providers.some(x=>x.info && d.info && x.info.uuid===d.info.uuid)) providers.push(d);
+});
 window.dispatchEvent(new Event('eip6963:requestProvider'));
 let wallet = null, account = null;
 const $ = id => document.getElementById(id);
 
 async function connect(){
+  window.dispatchEvent(new Event('eip6963:requestProvider')); // catch late-injecting wallets
   const p = (providers[0] && providers[0].provider) || window.ethereum;
   if(!p){ $('walletInfo').textContent = 'No wallet found — install one to zap.'; return; }
   try{
     const accts = await p.request({method:'eth_requestAccounts'});
+    if(!accts || !accts[0]) throw {code:4001};
     wallet = p; account = accts[0];
     $('walletInfo').textContent = account.slice(0,6)+'…'+account.slice(-4);
     $('connectBtn').textContent = 'Connected';
     await ensureChain();
     refreshBalance(); loadPositions(); loadWalletTokens();
-    p.on && p.on('accountsChanged', a=>{ account=a[0]||null; $('walletInfo').textContent=account?account.slice(0,6)+'…'+account.slice(-4):''; refreshBalance(); loadPositions(); });
-    p.on && p.on('chainChanged', ()=>ensureChain());
-  }catch(e){ $('walletInfo').textContent = 'Connection declined.'; }
+    if(p.on && !p._rwiBound){
+      p._rwiBound = true; // bind once — reconnect clicks must not stack duplicate listeners
+      p.on('accountsChanged', a=>{
+        account = (a && a[0]) || null;
+        extToken = null; walletTokens = []; // old account's tokens and balances are stale
+        $('walletInfo').textContent = account ? account.slice(0,6)+'…'+account.slice(-4) : '';
+        $('connectBtn').textContent = account ? 'Connected' : 'Connect wallet';
+        refreshBalance(); loadPositions();
+        if(account) loadWalletTokens();
+        else if(zapPool){ renderTokenSeg(); applyMode(); }
+      });
+      p.on('chainChanged', ()=>updateChainChip()); // passive — never prompt a switch uninvited; zapBtn enforces the chain at send time
+    }
+  }catch(e){
+    $('walletInfo').textContent =
+      e && e.code === -32002 ? 'Request already pending — check your wallet.' :
+      e && e.code === 4001  ? 'Connection declined.' : 'Connection failed.';
+  }
 }
+async function updateChainChip(){
+  if(!wallet) return;
+  try{
+    const cid = await wallet.request({method:'eth_chainId'});
+    $('chainChip').innerHTML = cid===CHAIN.idHex ? '<span class="chip">Robinhood Chain</span>' : '<span class="chip warn">Wrong network</span>';
+  }catch(e){}
+}
+// silent session resume — if the wallet already authorized this site, restore without a prompt
+(async function resume(){
+  await new Promise(r=>setTimeout(r,200)); // let EIP-6963 announcements land
+  const p = (providers[0] && providers[0].provider) || window.ethereum;
+  if(!p || !p.request) return;
+  try{
+    const accts = await p.request({method:'eth_accounts'});
+    if(accts && accts[0]) connect(); // already authorized — resolves with no prompt
+  }catch(e){}
+})();
 async function ensureChain(){
   if(!wallet) return false;
   try{
@@ -425,10 +463,14 @@ async function loadWalletTokens(){
       if((t.type||'')!=='ERC-20') return;
       const bal = BigInt(it.value||'0');
       if(bal<=0n) return;
-      walletTokens.push({addr:(t.address||'').toLowerCase(), sym:t.symbol||'?', dec:Number(t.decimals)||18, _bal:bal});
+      const dec = Number(t.decimals)||18;
+      const px = parseFloat(t.exchange_rate)||0; // USD per token, when Blockscout knows it
+      walletTokens.push({addr:(t.address||'').toLowerCase(), sym:t.symbol||'?', dec, _bal:bal, _usd:px*(Number(bal)/10**dec)});
     });
+    // order: highest USD holding value first; unpriced tokens sink to the end (stable sort keeps API order among them)
+    walletTokens.sort((a,b)=>b._usd-a._usd);
     walletTokens = walletTokens.slice(0,12);
-    if(zapPool) applyMode(); // re-render the token selector with wallet tokens
+    if(zapPool){ renderTokenSeg(); applyMode(); } // re-render the token selector with wallet tokens
   }catch(e){}
 }
 
@@ -554,13 +596,37 @@ function applyMode(){
 }
 
 function openZap(p, isV3plus){
-  zapPool = p;
+  zapPool = p; zapPool._v3 = !!isV3plus;
   const ds = p.ds||{};
   const sym0 = (p.token0&&p.token0.sym)||(ds.baseToken&&ds.baseToken.symbol)||'token0';
   const sym1 = (p.token1&&p.token1.sym)||(ds.quoteToken&&ds.quoteToken.symbol)||'token1';
   $('zapTitle').textContent = 'Zap into $'+sym0+' / $'+sym1;
   $('zapBody').style.display = '';
-  // token source selector: the pool's own tokens, then any wallet token, then custom
+  renderTokenSeg();
+  $('qFee').textContent = /v3|v4/.test(((ds.labels||[]).join(' ')).toLowerCase()) ? 'concentrated (v3/v4)' : '0.30% (v2)';
+
+  const zappable = p.v2 && !isV3plus && ROUTER_V2 && p.token0 && p.token1;
+  $('zapBtn').style.display = zappable ? '' : 'none';
+  const uni = $('uniLink');
+  uni.style.display = zappable ? 'none' : '';
+  const outCur = (p.token0&&p.token0.addr) || (ds.baseToken&&ds.baseToken.address) || '';
+  uni.href = 'https://app.uniswap.org/swap?outputCurrency='+outCur+'&chain=robinhood';
+  $('zapStatus').textContent = zappable ? '' :
+    (isV3plus ? 'This is a concentrated-liquidity (v3/v4) pool — the button opens Uniswap with the pool preloaded so you can set a range there.'
+     : !ROUTER_V2 ? 'In-page zap and pairing are pending router configuration — until then the button opens Uniswap directly.'
+     : 'Pool metadata still loading…');
+  zapPool._zappable = zappable;
+  applyMode();
+  document.getElementById('zap').scrollIntoView({behavior:'smooth'});
+}
+
+// token source selector: the pool's own tokens, then wallet tokens (highest USD value first), then custom
+function renderTokenSeg(){
+  const p = zapPool; if(!p) return;
+  const isV3plus = !!p._v3;
+  const ds = p.ds||{};
+  const sym0 = (p.token0&&p.token0.sym)||(ds.baseToken&&ds.baseToken.symbol)||'token0';
+  const sym1 = (p.token1&&p.token1.sym)||(ds.quoteToken&&ds.quoteToken.symbol)||'token1';
   const seg = $('tokenSeg'); seg.innerHTML='';
   [[0,sym0],[1,sym1]].forEach(([i,s])=>{
     const b=document.createElement('button'); b.textContent='$'+s;
@@ -571,7 +637,7 @@ function openZap(p, isV3plus){
   walletTokens.filter(w=>!isPoolToken(w.addr)).forEach(w=>{
     const b=document.createElement('button'); b.textContent='$'+w.sym;
     b.className = (extToken&&extToken.addr===w.addr)?'on':'';
-    b.title = 'zap from wallet balance';
+    b.title = w._usd>0 ? 'zap from wallet balance — ~$'+w._usd.toLocaleString('en-US',{maximumFractionDigits:2}) : 'zap from wallet balance';
     b.addEventListener('click',()=>{extToken=w;openZap(p,isV3plus)});
     seg.appendChild(b);
   });
@@ -591,21 +657,6 @@ function openZap(p, isV3plus){
   });
   seg.appendChild(cb);
   $('amtSym').textContent = '$'+(extToken?extToken.sym:(zapSide===0?sym0:sym1));
-  $('qFee').textContent = /v3|v4/.test(((ds.labels||[]).join(' ')).toLowerCase()) ? 'concentrated (v3/v4)' : '0.30% (v2)';
-
-  const zappable = p.v2 && !isV3plus && ROUTER_V2 && p.token0 && p.token1;
-  $('zapBtn').style.display = zappable ? '' : 'none';
-  const uni = $('uniLink');
-  uni.style.display = zappable ? 'none' : '';
-  const outCur = (p.token0&&p.token0.addr) || (ds.baseToken&&ds.baseToken.address) || '';
-  uni.href = 'https://app.uniswap.org/swap?outputCurrency='+outCur+'&chain=robinhood';
-  $('zapStatus').textContent = zappable ? '' :
-    (isV3plus ? 'This is a concentrated-liquidity (v3/v4) pool — the button opens Uniswap with the pool preloaded so you can set a range there.'
-     : !ROUTER_V2 ? 'In-page zap and pairing are pending router configuration — until then the button opens Uniswap directly.'
-     : 'Pool metadata still loading…');
-  zapPool._zappable = zappable;
-  applyMode();
-  document.getElementById('zap').scrollIntoView({behavior:'smooth'});
 }
 
 function inputToken(){
