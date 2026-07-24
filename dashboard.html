@@ -1120,8 +1120,9 @@ async function runConvert(conv, amt, st){
     st.textContent='Swap '+(i+1)+'/'+conv.steps.length+' in your wallet\u2026';
     const before = toBig(await ethCall(to, SEL.balanceOf+padA(account)));
     await sendTx(router, data);
-    curAmt = toBig(await ethCall(to, SEL.balanceOf+padA(account))) - before;
-    if(curAmt<=0n) throw new Error('swap output not detected');
+    st.textContent='Confirming swap '+(i+1)+'/'+conv.steps.length+'\u2026';
+    curAmt = await deltaAfter(to, before);
+    if(curAmt<=0n) throw new Error(LAG_MSG);
     cur = to;
   }
   return curAmt;
@@ -1285,6 +1286,21 @@ async function sendTx(to, data, value){
   throw new Error('timed out waiting for receipt');
 }
 const txLink = h => '<a href="https://robinhoodchain.blockscout.com/tx/'+h+'" target="_blank" rel="noopener">'+h.slice(0,10)+'… ↗</a>';
+// On a ~0.1s-block L2 with load-balanced RPCs, a balance read taken the instant a receipt
+// lands can hit a node that hasn't reached that block yet. Poll until the delta shows up —
+// a confirmed swap must never be declared "not detected" because a read lagged.
+async function deltaAfter(tokenAddr, before, tries){
+  tries = tries || 12; // up to ~18s
+  for(let i=0;i<tries;i++){
+    try{
+      const now = toBig(await ethCall(tokenAddr, SEL.balanceOf+padA(account)));
+      if(now>before) return now-before;
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,1500));
+  }
+  return 0n;
+}
+const LAG_MSG = 'swap confirmed onchain but balance reads are lagging — the tokens ARE in your wallet; wait a few seconds, refresh, and continue from there';
 
 async function execPair(st){
   const t0=zapPool.token0, t1=zapPool.token1;
@@ -1343,8 +1359,9 @@ async function execZapV3(st){
     + padA(tIn.addr) + padA(tOut.addr) + padU(zapPool.fee) + padA(account)
     + padU(s) + padU(minOut) + padU(0);
   const h1 = await sendTx(V3_ROUTER, swapData);
-  const got = toBig(await ethCall(tOut.addr, SEL.balanceOf+padA(account))) - before;
-  if(got<=0n) throw new Error('swap output not detected');
+  st.textContent='Confirming swap\u2026';
+  const got = await deltaAfter(tOut.addr, before);
+  if(got<=0n) throw new Error(LAG_MSG);
   // 2. approve both sides for the position manager
   const a0 = zeroForOne ? amt-s : got, a1 = zeroForOne ? got : amt-s;
   for(const [tk,need] of [[t0,a0],[t1,a1]]){
@@ -1437,8 +1454,9 @@ $('zapBtn').addEventListener('click', async ()=>{
       + padA(account) + padU(deadline)
       + padU(2) + padA(t.addr) + padA(o.addr);
     const h2 = await sendTx(ROUTER_V2, swapData);
-    const got = toBig(await ethCall(o.addr, SEL.balanceOf+padA(account))) - balBefore;
-    if(got<=0n) throw new Error('swap output not detected');
+    st.textContent='Confirming swap\u2026';
+    const got = await deltaAfter(o.addr, balBefore);
+    if(got<=0n) throw new Error(LAG_MSG);
 
     // 2b. approve other side
     const allowO = toBig(await ethCall(o.addr, SEL.allowance+padA(account)+padA(ROUTER_V2)));
@@ -1616,8 +1634,9 @@ $('uzBtn').addEventListener('click', async ()=>{
       st.textContent='Withdraw + collect (one transaction) in your wallet…';
       hOut = await sendTx(V3_NPM, data);
     }
-    const g0 = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account))) - b0;
-    const g1 = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account))) - b1;
+    st.textContent='Confirming receipt of tokens\u2026';
+    const g0 = await deltaAfter(t0.addr, b0, 8);
+    const g1 = await deltaAfter(t1.addr, b1, 3); // node is synced once g0 lands
     st.innerHTML='Unzapped \u2713 '+fmtUnits(g0>0n?g0:0n,t0.dec)+' $'+esc(t0.sym)+' + '+fmtUnits(g1>0n?g1:0n,t1.dec)+' $'+esc(t1.sym)+' to your wallet \u2014 '+txLink(hOut);
     refreshBalance(); loadPositions(); loadWalletTokens();
   }catch(err){
