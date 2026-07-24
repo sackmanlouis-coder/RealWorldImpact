@@ -351,7 +351,7 @@ const SEL = {
   // v3 pool reads
   slot0:'0x3850c7bd', fee:'0xddca3f43', tickSpacing:'0xd0c93a7c', liquidity:'0x1a686502',
   // SwapRouter02 + NonfungiblePositionManager + WETH (selectors keccak-verified)
-  exactInputSingle:'0x04e45aaf', mint:'0x88316456', deposit:'0xd0e30db0',
+  exactInputSingle:'0x04e45aaf', exactInput:'0xb858183f', mint:'0x88316456', deposit:'0xd0e30db0',
   tokenOfOwnerByIndex:'0x2f745c59', positions:'0x99fbab88',
   // unzap (selectors keccak-verified)
   decreaseLiquidity:'0x0c49ccbe', collect:'0xfc6f7865', wethWithdraw:'0x2e1a7d4d', getPool:'0x1698ee82'
@@ -1025,6 +1025,77 @@ async function preflightMins(to, build){
     catch(e3){ throw new Error('price is moving faster than your slippage allows — try again or raise slippage'); }
   }
 }
+// ==========================================================================
+//   v3 routing — turn ANY Robinhood Chain token into a pool side.
+//   Candidates: direct X\u2192side and X\u2192WETH\u2192side across all fee tiers, each quoted
+//   with the exact curve math against the live pool state; best value wins.
+// ==========================================================================
+const V3_FEES = [100, 500, 3000, 10000];
+const gpCache = {}; // factory pool lookups are immutable \u2014 cache forever
+async function v3PoolAddr(a, b, fee){
+  const key = [a.toLowerCase(), b.toLowerCase()].sort().join('') + fee;
+  if(gpCache[key] !== undefined) return gpCache[key];
+  try{
+    const r = await ethCall(V3_FACTORY, SEL.getPool + padA(a) + padA(b) + padU(fee));
+    const addr = ('0x'+r.slice(-40)).toLowerCase();
+    return gpCache[key] = /^0x0{40}$/.test(addr) ? null : addr;
+  }catch(e){ return gpCache[key] = null; }
+}
+async function v3PoolQuote(a, b, fee, amtIn){ // exact-in a\u2192b through the (a,b,fee) pool
+  const addr = await v3PoolAddr(a, b, fee); if(!addr) return null;
+  const key = 'ps:'+addr; let stt = cacheGet(key);
+  if(!stt){
+    try{
+      const [s, L] = await Promise.all([ethCall(addr, SEL.slot0), ethCall(addr, SEL.liquidity)]);
+      stt = cachePut(key, { S: BigInt('0x'+s.replace('0x','').slice(0,64)), L: toBig(L) });
+    }catch(e){ return null; }
+  }
+  if(stt.L<=0n || stt.S<=0n) return null;
+  const zeroForOne = a.toLowerCase() < b.toLowerCase(); // token0 is the lower address
+  const out = v3ExactOut(amtIn, zeroForOne, stt.S, stt.L, fee);
+  return out>0n ? out : null;
+}
+async function findV3Route(x, amt, pool){
+  x = x.toLowerCase();
+  const cands = [];
+  await Promise.all([pool.token0, pool.token1].map(async (T, i)=>{
+    const tAddr = T.addr.toLowerCase();
+    if(tAddr===x) return;
+    await Promise.all(V3_FEES.map(async f=>{ // direct
+      const out = await v3PoolQuote(x, tAddr, f, amt);
+      if(out) cands.push({hops:[[x,f,tAddr]], out, side:i, T});
+    }));
+    if(CANON_WETH && x!==CANON_WETH && tAddr!==CANON_WETH){ // via WETH
+      let best1 = null;
+      await Promise.all(V3_FEES.map(async f=>{
+        const o = await v3PoolQuote(x, CANON_WETH, f, amt);
+        if(o && (!best1 || o>best1.out)) best1 = {out:o, fee:f};
+      }));
+      if(best1){
+        await Promise.all(V3_FEES.map(async f=>{
+          const o2 = await v3PoolQuote(CANON_WETH, tAddr, f, best1.out);
+          if(o2) cands.push({hops:[[x,best1.fee,CANON_WETH],[CANON_WETH,f,tAddr]], out:o2, side:i, T});
+        }));
+      }
+    }
+  }));
+  if(!cands.length) return null;
+  let S = null; try{ S = (await v3State(pool)).sqrtP; }catch(e){}
+  const val = c => (c.side===0 || !S) ? c.out : c.out*Q192/(S*S); // compare in token0 terms
+  cands.sort((a,b)=> val(b)>val(a) ? 1 : val(b)<val(a) ? -1 : 0);
+  const best = cands[0];
+  best.path = '0x' + best.hops.map((h,i)=>(i===0 ? h[0].replace('0x','') : '') + h[1].toString(16).padStart(6,'0') + h[2].replace('0x','')).join('');
+  best.desc = best.hops.map(h=> h[2]===CANON_WETH && h[2]!==best.T.addr.toLowerCase() ? '$WETH' : '$'+best.T.sym).join(' \u2192 ');
+  return best;
+}
+// SwapRouter02.exactInput((bytes path, address recipient, uint256 amountIn, uint256 amountOutMinimum))
+function encodeExactInput(path, recipient, amtIn, minOut){
+  const pdat = path.replace('0x','');
+  const padded = pdat + '0'.repeat((64 - pdat.length % 64) % 64);
+  return SEL.exactInput + padU(0x20)
+    + padU(0x80) + padA(recipient) + padU(amtIn) + padU(minOut)
+    + padU(pdat.length/2) + padded;
+}
 // exact-in v3 swap output within the active tick, INCLUDING size impact — not spot price.
 // Assumes constant liquidity across the traversed range, which is exact when the pool's
 // liquidity is full-range (as everything this dashboard mints is).
@@ -1088,25 +1159,35 @@ async function quoteV3(){
     return;
   }
   const t=inputToken();
-  const amt=parseUnits($('amtIn').value,t.dec);
+  let amt=parseUnits($('amtIn').value,t.dec);
   if(!amt||amt<=0n){ dash(); return; }
-  if(!isPoolToken((t.addr||'').toLowerCase())){
-    $('qSwap').textContent='On v3 pools, zap with a pool token'+(CANON_WETH&&isPoolToken(CANON_WETH)?', $ETH, or $WETH':'')+'.';
-    $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return;
-  }
+  let routeTxt='', kept, other, s, out, zeroForOne;
   const {sqrtP, L} = await v3State();
-  const zeroForOne = (t.addr||'').toLowerCase()===t0.addr.toLowerCase();
-  const other = zeroForOne?t1:t0, kept = zeroForOne?t0:t1;
-  const s = amt/2n; // full-range positions want ~equal value on both sides
-  const out = v3ExactOut(s, zeroForOne, sqrtP, L, zapPool.fee);
+  if(!isPoolToken((t.addr||'').toLowerCase())){
+    $('qSwap').textContent='finding route for $'+t.sym+'…';
+    const route = await findV3Route((t.addr||'').toLowerCase(), amt, zapPool);
+    if(!route){
+      $('qSwap').textContent='no v3 route found for $'+t.sym+' — no pool connects it to this pair yet';
+      $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return;
+    }
+    routeTxt='$'+(t.native?'ETH':t.sym)+' → '+route.desc+' ('+route.hops.length+'-hop) → ';
+    amt = route.out;                       // continue the split with the converted amount
+    zeroForOne = route.side===0;
+    kept = route.side===0?t0:t1; other = route.side===0?t1:t0;
+  }else{
+    zeroForOne = (t.addr||'').toLowerCase()===t0.addr.toLowerCase();
+    kept = zeroForOne?t0:t1; other = zeroForOne?t1:t0;
+  }
+  s = amt/2n; // full-range positions want ~equal value on both sides
+  out = v3ExactOut(s, zeroForOne, sqrtP, L, zapPool.fee);
   const wrap = !!t.native;
-  $('qSwap').textContent=(wrap?'wrap → ':'')+fmtUnits(s,t.dec)+' $'+(wrap?'ETH':t.sym)+' → ~'+fmtUnits(out,other.dec)+' $'+other.sym;
-  $('qDep').textContent='~'+fmtUnits(amt-s,t.dec)+' $'+kept.sym+' + ~'+fmtUnits(out,other.dec)+' $'+other.sym;
+  $('qSwap').textContent=(wrap?'wrap → ':'')+routeTxt+fmtUnits(s,kept.dec)+' $'+kept.sym+' → ~'+fmtUnits(out,other.dec)+' $'+other.sym;
+  $('qDep').textContent='~'+fmtUnits(amt-s,kept.dec)+' $'+kept.sym+' + ~'+fmtUnits(out,other.dec)+' $'+other.sym;
   if(L>0n){
     const imp = zeroForOne ? Number((s*sqrtP/Q96)*100000n/L)/1000 : Number((s*Q96/sqrtP)*100000n/L)/1000;
     $('qImpact').textContent = imp.toFixed(2)+'% (active-tick est.)'+(imp>2?' ⚠ high — consider pair mode':'');
   } else $('qImpact').textContent='—';
-  $('qRoute').textContent=(wrap?'wrap ETH → ':'')+'swap ½ → mint FULL-RANGE v3';
+  $('qRoute').textContent=(wrap?'wrap ETH → ':'')+(routeTxt?'route → ':'')+'swap ½ → mint FULL-RANGE v3';
   $('zapBtn').disabled = !(account && zapPool._zappable);
 }
 async function updateQuote(){
@@ -1218,15 +1299,39 @@ async function execPair(st){
 // bounds for the pool's tickSpacing, so the position behaves like classic always-in-range LP.
 async function execZapV3(st){
   let t = inputToken();
-  const amt = parseUnits($('amtIn').value, t.dec);
+  let amt = parseUnits($('amtIn').value, t.dec);
   if(!amt || amt<=0n){ st.textContent='Enter an amount.'; return; }
   if(t._bal!=null && amt>t._bal){ st.textContent='Amount exceeds balance.'; return; }
-  if(!isPoolToken((t.addr||'').toLowerCase())){ st.textContent='On v3 pools, zap with a pool token, $ETH, or $WETH.'; return; }
   const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
   if(t.native){
     st.textContent='Wrap ETH → WETH in your wallet…';
     await sendTx(CANON_WETH, SEL.deposit, amt);
     t = {addr:CANON_WETH, sym:'WETH', dec:18};
+  }
+  // ANY token in: route it into a pool side first, then split inside the pool as usual
+  if(!isPoolToken((t.addr||'').toLowerCase())){
+    st.textContent='Finding route for $'+t.sym+'…';
+    const route = await findV3Route((t.addr||'').toLowerCase(), amt, zapPool);
+    if(!route){ st.textContent='No v3 route found for $'+t.sym+' — no pool connects it to this pair yet.'; return; }
+    const al = toBig(await ethCall(t.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
+    if(al < amt){ st.textContent='Approve $'+t.sym+' for the router in your wallet…'; await sendTx(t.addr, SEL.approve+padA(V3_ROUTER)+padU(amt)); }
+    const single = route.hops.length===1;
+    const from = t;
+    const build = bps => {
+      const mo = route.out*(10000n-BigInt(bps))/10000n;
+      return single
+        ? SEL.exactInputSingle + padA(from.addr)+padA(route.T.addr)+padU(route.hops[0][1])+padA(account)+padU(amt)+padU(mo)+padU(0)
+        : encodeExactInput(route.path, account, amt, mo);
+    };
+    st.textContent='Checking the route…';
+    const data = await preflightMins(V3_ROUTER, build);
+    st.textContent='Routing $'+t.sym+' → $'+route.T.sym+' in your wallet…';
+    const before = toBig(await ethCall(route.T.addr, SEL.balanceOf+padA(account)));
+    const hr = await sendTx(V3_ROUTER, data);
+    const got = toBig(await ethCall(route.T.addr, SEL.balanceOf+padA(account))) - before;
+    if(got<=0n) throw new Error('route output not detected');
+    st.innerHTML='Routed '+txLink(hr)+' — continuing zap…';
+    t = route.T; amt = got;
   }
   const t0=zapPool.token0, t1=zapPool.token1;
   const zeroForOne = t.addr.toLowerCase()===t0.addr.toLowerCase();
