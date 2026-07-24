@@ -142,7 +142,11 @@
   .pos-table{margin-top:16px;font-family:var(--mono);font-size:12.5px}
   .pos-table .row{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:12px;padding:12px 0;border-bottom:1px solid var(--rule)}
   .pos-table .row.head{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;opacity:.7;border-bottom:1px solid var(--rule-strong)}
-  @media (max-width:560px){.pos-table .row{grid-template-columns:1fr 1fr}.pos-table .row :nth-child(3){display:none}}
+  @media (max-width:560px){
+    .pos-table .row{grid-template-columns:1fr 1fr}
+    .pos-table .row :nth-child(3){grid-column:1 / -1}
+    .pos-table .row.head :nth-child(3){display:none}
+  }
 
   /* ---------- two-tone cursors: ink on lime, lime on ink ---------- */
   @media (any-pointer:fine){
@@ -223,7 +227,7 @@
             <div class="amt"><input id="amtIn" inputmode="decimal" placeholder="0.0"><span class="sym" id="amtSym">—</span></div>
           </div>
           <div class="field" id="pairField" style="display:none">
-            <div class="flabel"><span>And</span><button id="maxBtnB" type="button">Balance: <span id="balTxtB">—</span> · MAX</button></div>
+            <div class="flabel"><span></span><button id="maxBtnB" type="button">Balance: <span id="balTxtB">—</span> · MAX</button></div>
             <div class="amt"><input id="amtInB" inputmode="decimal" placeholder="0.0"><span class="sym" id="amtSymB">—</span></div>
           </div>
           <div class="field">
@@ -783,7 +787,7 @@ function applyMode(){
   const pairMode = mode==='pair';
   $('tokenSegField').style.display = pairMode?'none':'';
   $('pairField').style.display = pairMode?'':'none';
-  $('amtLabel').textContent = pairMode?'Token A amount':'Amount';
+  $('amtLabel').textContent = 'Amount';
   $('qRoute').textContent = pairMode?'deposit both sides → add LP':'swap ½ inside pool → add LP';
   $('zapBtn').textContent = pairMode?'Add liquidity':'Zap';
   const t0=zapPool.token0, t1=zapPool.token1;
