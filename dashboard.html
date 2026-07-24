@@ -72,6 +72,7 @@
     font-family:var(--mono);font-size:12.5px;letter-spacing:.06em;
   }
   .wallet-menu{display:none;flex-wrap:wrap;gap:8px;padding:10px 0;border-bottom:1px solid var(--rule)}
+  .pos-act{background:none;border:none;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-bottom:1px solid var(--rule);padding:0;margin-top:4px;margin-right:14px;color:inherit}
   .btn{
     font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;
     background:var(--ink);color:var(--lime);border:1px solid var(--ink);
@@ -259,6 +260,25 @@
         <div class="row head"><span>Pool</span><span>LP balance</span><span>Share of pool</span></div>
         <div class="row" id="posEmpty"><span>Connect a wallet to see LP positions.</span><span></span><span></span></div>
       </div>
+      <div id="unzapBox" style="display:none;margin-top:22px;border-top:1px solid var(--rule);padding-top:16px">
+        <div class="field">
+          <div class="flabel"><span id="uzTitle">Unzap</span></div>
+          <div class="seg" id="uzPct">
+            <button data-p="25">25%</button>
+            <button data-p="50">50%</button>
+            <button data-p="100" class="on">100%</button>
+          </div>
+        </div>
+        <div class="field">
+          <div class="flabel"><span>Receive everything as</span></div>
+          <div class="seg" id="uzToken"></div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="uzBtn">Unzap</button>
+          <button class="btn ghost" id="uzCancel">Cancel</button>
+        </div>
+        <p class="status" id="uzStatus"></p>
+      </div>
       <p class="fine" style="margin-top:14px">V2-style LP tokens earn the pool's trading fee automatically — fees compound into your position and are realized when you withdraw liquidity.</p>
     </div>
   </section>
@@ -331,8 +351,11 @@ const SEL = {
   slot0:'0x3850c7bd', fee:'0xddca3f43', tickSpacing:'0xd0c93a7c', liquidity:'0x1a686502',
   // SwapRouter02 + NonfungiblePositionManager + WETH (selectors keccak-verified)
   exactInputSingle:'0x04e45aaf', mint:'0x88316456', deposit:'0xd0e30db0',
-  tokenOfOwnerByIndex:'0x2f745c59', positions:'0x99fbab88'
+  tokenOfOwnerByIndex:'0x2f745c59', positions:'0x99fbab88',
+  // unzap (selectors keccak-verified)
+  decreaseLiquidity:'0x0c49ccbe', collect:'0xfc6f7865', wethWithdraw:'0x2e1a7d4d'
 };
+const MAX128 = (1n<<128n)-1n;
 const padA = a => a.toLowerCase().replace('0x','').padStart(64,'0');
 const padU = n => BigInt(n).toString(16).padStart(64,'0');
 const padI = n => { let v=BigInt(n); if(v<0n) v += 1n<<256n; return v.toString(16).padStart(64,'0'); }; // two's-complement int
@@ -1309,7 +1332,7 @@ async function loadPositions(){
           `<div class="row" data-pair="${p.pair}">
              <span>$${s0} / $${s1}${underTxt}</span>
              <span>${fmtUnits(bal,18)}</span>
-             <span>${share.toFixed(4)}%${usdTxt}${canW?'<br><button class="wd" data-pair="'+p.pair+'" style="background:none;border:none;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-bottom:1px solid var(--rule);padding:0;margin-top:4px;color:inherit">Withdraw</button>':''}</span>
+             <span>${share.toFixed(4)}%${usdTxt}${canW?'<br><button class="wd pos-act" data-pair="'+p.pair+'">Withdraw</button><button class="uz pos-act" data-kind="v2" data-pair="'+p.pair+'">Unzap</button>':''}</span>
            </div>`);
       }
     }catch(e){/* v3/v4 pool ids have no ERC20 balance — skip */}
@@ -1334,12 +1357,136 @@ async function loadPositions(){
         `<div class="row">
            <span>$${match.token0.sym} / $${match.token1.sym}<br><span style="opacity:.65;font-size:11px">v3 ${full?'full range':'range ['+lo+', '+hi+']'} · NFT #${id}</span></span>
            <span>liq ${liq.toLocaleString('en-US')}</span>
-           <span><a href="https://app.uniswap.org/positions" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--rule);text-decoration:none">Manage ↗</a></span>
+           <span><a href="https://app.uniswap.org/positions" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--rule);text-decoration:none">Manage ↗</a>${full?'<br><button class="uz pos-act" data-kind="v3" data-pair="'+match.pair+'" data-id="'+id+'" data-liq="'+liq+'">Unzap</button>':''}</span>
          </div>`);
     }
   }catch(e){/* NPM unreachable or none held */}
   if(!any) tbl.insertAdjacentHTML('beforeend','<div class="row"><span>No LP balances found in registry pools.</span><span></span><span></span></div>');
 }
+
+// ==========================================================================
+//   Unzap — pull liquidity out and receive it all as ONE token of your choosing
+//   v2: removeLiquidity → swap the other side into the chosen token
+//   v3: decreaseLiquidity → collect → swap the other side (full-range positions only)
+//   Choosing $ETH = the WETH route plus a final WETH.withdraw unwrap.
+// ==========================================================================
+let unzap = null, uzChoice = null, uzPct = 100;
+function openUnzap(o){
+  unzap = o; uzPct = 100;
+  const p = o.pool, t0 = p.token0, t1 = p.token1;
+  $('uzTitle').textContent = 'Unzap $'+t0.sym+' / $'+t1.sym+(o.kind==='v3' ? ' · v3 NFT #'+o.id : '');
+  [...$('uzPct').children].forEach(x=>x.classList.toggle('on', x.dataset.p==='100'));
+  const seg = $('uzToken'); seg.innerHTML='';
+  const opts = [[t0.addr.toLowerCase(),'$'+t0.sym],[t1.addr.toLowerCase(),'$'+t1.sym]];
+  if(CANON_WETH && (t0.addr.toLowerCase()===CANON_WETH || t1.addr.toLowerCase()===CANON_WETH)) opts.push(['ETH','$ETH']);
+  uzChoice = opts[0][0];
+  opts.forEach(([val,label],i)=>{
+    const b=document.createElement('button'); b.textContent=label; b.className=i===0?'on':'';
+    b.addEventListener('click',()=>{ uzChoice=val; [...seg.children].forEach(x=>x.classList.toggle('on',x===b)); });
+    seg.appendChild(b);
+  });
+  $('uzStatus').textContent='';
+  $('unzapBox').style.display='';
+  $('unzapBox').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+$('uzPct').addEventListener('click', e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  uzPct = Number(b.dataset.p);
+  [...$('uzPct').children].forEach(x=>x.classList.toggle('on',x===b));
+});
+$('uzCancel').addEventListener('click', ()=>{ $('unzapBox').style.display='none'; unzap=null; });
+$('posTable').addEventListener('click', e=>{
+  const b = e.target.closest('button.uz'); if(!b) return;
+  const p = pools.get(b.dataset.pair); if(!p || !account) return;
+  if(b.dataset.kind==='v3') openUnzap({kind:'v3', pool:p, id:BigInt(b.dataset.id), liq:BigInt(b.dataset.liq)});
+  else openUnzap({kind:'v2', pool:p});
+});
+$('uzBtn').addEventListener('click', async ()=>{
+  if(!unzap || !account) return;
+  const st = $('uzStatus'); const p = unzap.pool;
+  try{
+    if(!(await ensureChain())){ st.textContent='Switch to Robinhood Chain first.'; return; }
+    const t0=p.token0, t1=p.token1;
+    const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
+    const slip = 10000n-BigInt(slipBps);
+    const targetAddr = uzChoice==='ETH' ? CANON_WETH : uzChoice; // ETH = WETH route + unwrap at the end
+    const tTgt = targetAddr===t0.addr.toLowerCase()?t0:t1;
+    const tOth = tTgt===t0?t1:t0;
+    const b0 = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account)));
+    const b1 = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account)));
+    let hOut;
+    if(unzap.kind==='v2'){
+      const bal = toBig(await ethCall(p.pair, SEL.balanceOf+padA(account)));
+      const sup = toBig(await ethCall(p.pair, SEL.totalSupply));
+      const liq = bal*BigInt(uzPct)/100n;
+      if(liq<=0n) throw new Error('nothing to unzap');
+      const rh = (await ethCall(p.pair, SEL.getReserves)).replace('0x','');
+      const r0=BigInt('0x'+rh.slice(0,64)), r1=BigInt('0x'+rh.slice(64,128));
+      const min0=r0*liq/sup*slip/10000n, min1=r1*liq/sup*slip/10000n;
+      const allow = toBig(await ethCall(p.pair, SEL.allowance+padA(account)+padA(ROUTER_V2)));
+      if(allow<liq){ st.textContent='Approve LP token in your wallet…'; await sendTx(p.pair, SEL.approve+padA(ROUTER_V2)+padU(liq)); }
+      st.textContent='Remove liquidity in your wallet…';
+      hOut = await sendTx(ROUTER_V2, SEL.removeLiquidity + padA(t0.addr)+padA(t1.addr)
+        + padU(liq)+padU(min0)+padU(min1)+padA(account)+padU(deadline));
+    }else{
+      const liqPart = unzap.liq*BigInt(uzPct)/100n;
+      if(liqPart<=0n) throw new Error('nothing to unzap');
+      const {sqrtP} = await (async()=>{ const s=(await ethCall(p.pair,SEL.slot0)).replace('0x',''); return {sqrtP:BigInt('0x'+s.slice(0,64))}; })();
+      // full-range expected amounts (sqrtLo≈0, sqrtHi≈∞ — exact to ~1e-9 for full-range positions)
+      const e0 = liqPart*Q96/sqrtP, e1 = liqPart*sqrtP/Q96;
+      const min0 = e0*slip/10000n, min1 = e1*slip/10000n;
+      st.textContent='Decrease liquidity in your wallet…';
+      await sendTx(V3_NPM, SEL.decreaseLiquidity + padU(unzap.id)+padU(liqPart)+padU(min0)+padU(min1)+padU(deadline));
+      st.textContent='Collect tokens in your wallet…';
+      hOut = await sendTx(V3_NPM, SEL.collect + padU(unzap.id)+padA(account)+padU(MAX128)+padU(MAX128));
+    }
+    // measure what actually arrived, then consolidate into the chosen token
+    const g0 = toBig(await ethCall(t0.addr, SEL.balanceOf+padA(account))) - b0;
+    const g1 = toBig(await ethCall(t1.addr, SEL.balanceOf+padA(account))) - b1;
+    const gotOth = tOth===t0?g0:g1;
+    let gotTgt = tTgt===t0?g0:g1;
+    let hSwap = null;
+    if(gotOth>0n){
+      if(unzap.kind==='v2'){
+        const rh=(await ethCall(p.pair, SEL.getReserves)).replace('0x','');
+        const r0=BigInt('0x'+rh.slice(0,64)), r1=BigInt('0x'+rh.slice(64,128));
+        const rIn = tOth===t0?r0:r1, rOut = tOth===t0?r1:r0;
+        const minOut = (gotOth*997n*rOut)/(rIn*1000n+gotOth*997n)*slip/10000n;
+        const al = toBig(await ethCall(tOth.addr, SEL.allowance+padA(account)+padA(ROUTER_V2)));
+        if(al<gotOth){ st.textContent='Approve $'+tOth.sym+' in your wallet…'; await sendTx(tOth.addr, SEL.approve+padA(ROUTER_V2)+padU(gotOth)); }
+        st.textContent='Swap $'+tOth.sym+' → $'+tTgt.sym+' in your wallet…';
+        const before = toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account)));
+        hSwap = await sendTx(ROUTER_V2, SEL.swapExactTokensForTokens
+          + padU(gotOth)+padU(minOut)+padU(0xa0)+padA(account)+padU(deadline)
+          + padU(2)+padA(tOth.addr)+padA(tTgt.addr));
+        gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
+      }else{
+        const s=(await ethCall(p.pair,SEL.slot0)).replace('0x','');
+        const sqrtP=BigInt('0x'+s.slice(0,64));
+        const zeroForOne = tOth.addr.toLowerCase()===t0.addr.toLowerCase();
+        const minOut = v3SpotOut(gotOth, zeroForOne, sqrtP, p.fee)*slip/10000n;
+        const al = toBig(await ethCall(tOth.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
+        if(al<gotOth){ st.textContent='Approve $'+tOth.sym+' in your wallet…'; await sendTx(tOth.addr, SEL.approve+padA(V3_ROUTER)+padU(gotOth)); }
+        st.textContent='Swap $'+tOth.sym+' → $'+tTgt.sym+' in your wallet…';
+        const before = toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account)));
+        hSwap = await sendTx(V3_ROUTER, SEL.exactInputSingle
+          + padA(tOth.addr)+padA(tTgt.addr)+padU(p.fee)+padA(account)+padU(gotOth)+padU(minOut)+padU(0));
+        gotTgt += toBig(await ethCall(tTgt.addr, SEL.balanceOf+padA(account))) - before;
+      }
+    }
+    let hUnwrap = null;
+    if(uzChoice==='ETH' && gotTgt>0n){
+      st.textContent='Unwrap WETH → ETH in your wallet…';
+      hUnwrap = await sendTx(CANON_WETH, SEL.wethWithdraw+padU(gotTgt));
+    }
+    const sym = uzChoice==='ETH' ? 'ETH' : tTgt.sym;
+    st.innerHTML='Unzapped ✓ ~'+fmtUnits(gotTgt, tTgt.dec)+' $'+sym+' — '+txLink(hOut)
+      +(hSwap?' · swap '+txLink(hSwap):'')+(hUnwrap?' · unwrap '+txLink(hUnwrap):'');
+    refreshBalance(); loadPositions(); loadWalletTokens();
+  }catch(err){
+    st.textContent='Unzap stopped: '+(err&&err.message||'unknown')+' — nothing further was sent.';
+  }
+});
 
 // withdraw: approve LP token → removeLiquidity, minimums from share × reserves × slippage
 $('posTable').addEventListener('click', async e=>{
