@@ -1055,46 +1055,76 @@ async function v3PoolQuote(a, b, fee, amtIn){ // exact-in a\u2192b through the (
   const out = v3ExactOut(amtIn, zeroForOne, stt.S, stt.L, fee);
   return out>0n ? out : null;
 }
-async function findV3Route(x, amt, pool){
+// best single hop a\u2192b across BOTH protocols: every v3 fee tier and the v2 pair,
+// each quoted with exact math against live state \u2014 highest output wins the hop
+async function hopBest(a, b, amt){
+  const cands = [];
+  await Promise.all(V3_FEES.map(async f=>{
+    const o = await v3PoolQuote(a, b, f, amt);
+    if(o) cands.push({proto:'v3', fee:f, out:o});
+  }));
+  try{ const o = await amountsOut(amt, [a, b]); if(o && o>0n) cands.push({proto:'v2', out:o}); }catch(e){}
+  if(!cands.length) return null;
+  cands.sort((p,q)=> q.out>p.out ? 1 : q.out<p.out ? -1 : 0);
+  return cands[0];
+}
+// best conversion of ANY token into one pool side \u2014 direct or via WETH, with every hop
+// free to use whichever protocol version actually holds the liquidity
+async function bestConvert(x, amt, pool){
   x = x.toLowerCase();
   const cands = [];
   await Promise.all([pool.token0, pool.token1].map(async (T, i)=>{
     const tAddr = T.addr.toLowerCase();
     if(tAddr===x) return;
-    await Promise.all(V3_FEES.map(async f=>{ // direct
-      const out = await v3PoolQuote(x, tAddr, f, amt);
-      if(out) cands.push({hops:[[x,f,tAddr]], out, side:i, T});
-    }));
-    if(CANON_WETH && x!==CANON_WETH && tAddr!==CANON_WETH){ // via WETH
-      let best1 = null;
-      await Promise.all(V3_FEES.map(async f=>{
-        const o = await v3PoolQuote(x, CANON_WETH, f, amt);
-        if(o && (!best1 || o>best1.out)) best1 = {out:o, fee:f};
-      }));
-      if(best1){
-        await Promise.all(V3_FEES.map(async f=>{
-          const o2 = await v3PoolQuote(CANON_WETH, tAddr, f, best1.out);
-          if(o2) cands.push({hops:[[x,best1.fee,CANON_WETH],[CANON_WETH,f,tAddr]], out:o2, side:i, T});
-        }));
+    const d = await hopBest(x, tAddr, amt);
+    if(d) cands.push({steps:[{from:x, to:tAddr, proto:d.proto, fee:d.fee}], out:d.out, side:i, T});
+    if(CANON_WETH && x!==CANON_WETH && tAddr!==CANON_WETH){
+      const h1 = await hopBest(x, CANON_WETH, amt);
+      if(h1){
+        const h2 = await hopBest(CANON_WETH, tAddr, h1.out);
+        if(h2) cands.push({steps:[{from:x,to:CANON_WETH,proto:h1.proto,fee:h1.fee},{from:CANON_WETH,to:tAddr,proto:h2.proto,fee:h2.fee}], out:h2.out, side:i, T});
       }
     }
   }));
   if(!cands.length) return null;
-  let S = null; try{ S = (await v3State(pool)).sqrtP; }catch(e){}
-  const val = c => (c.side===0 || !S) ? c.out : c.out*Q192/(S*S); // compare in token0 terms
-  cands.sort((a,b)=> val(b)>val(a) ? 1 : val(b)<val(a) ? -1 : 0);
+  // compare candidates in token0 terms at the zap pool's own price
+  let mul=1n, div=1n;
+  try{
+    if(pool.kind==='v3'){ const {sqrtP} = await v3State(pool); mul=Q192; div=sqrtP*sqrtP; }
+    else{ const rh=(await ethCall(pool.pair, SEL.getReserves)).replace('0x',''); mul=BigInt('0x'+rh.slice(0,64)); div=BigInt('0x'+rh.slice(64,128)); }
+  }catch(e){}
+  const val = c => c.side===0 ? c.out : (div>0n ? c.out*mul/div : c.out);
+  cands.sort((a,b)=> val(b)>val(a)?1:val(b)<val(a)?-1:0);
   const best = cands[0];
-  best.path = '0x' + best.hops.map((h,i)=>(i===0 ? h[0].replace('0x','') : '') + h[1].toString(16).padStart(6,'0') + h[2].replace('0x','')).join('');
-  best.desc = best.hops.map(h=> h[2]===CANON_WETH && h[2]!==best.T.addr.toLowerCase() ? '$WETH' : '$'+best.T.sym).join(' \u2192 ');
+  best.desc = best.steps.map(s=>'\u2192('+s.proto+(s.fee?' '+(s.fee/10000)+'%':'')+') $'+(s.to===CANON_WETH && s.to!==best.T.addr.toLowerCase() ? 'WETH' : best.T.sym)).join(' ');
   return best;
 }
-// SwapRouter02.exactInput((bytes path, address recipient, uint256 amountIn, uint256 amountOutMinimum))
-function encodeExactInput(path, recipient, amtIn, minOut){
-  const pdat = path.replace('0x','');
-  const padded = pdat + '0'.repeat((64 - pdat.length % 64) % 64);
-  return SEL.exactInput + padU(0x20)
-    + padU(0x80) + padA(recipient) + padU(amtIn) + padU(minOut)
-    + padU(pdat.length/2) + padded;
+// execute a conversion plan hop-by-hop: each hop re-quoted fresh on the measured input,
+// preflight-laddered, sent through its own protocol's router, output measured by delta
+async function runConvert(conv, amt, st){
+  let cur = conv.steps[0].from, curAmt = amt;
+  for(let i=0;i<conv.steps.length;i++){
+    const s = conv.steps[i];
+    const router = s.proto==='v2' ? ROUTER_V2 : V3_ROUTER;
+    const al = toBig(await ethCall(cur, SEL.allowance+padA(account)+padA(router)));
+    if(al < curAmt){ st.textContent='Approve swap '+(i+1)+'/'+conv.steps.length+' in your wallet\u2026'; await sendTx(cur, SEL.approve+padA(router)+padU(curAmt)); }
+    const q = s.proto==='v2' ? await amountsOut(curAmt,[s.from,s.to]) : await v3PoolQuote(s.from, s.to, s.fee, curAmt);
+    if(!q || q<=0n) throw new Error('route liquidity changed \u2014 try again');
+    const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
+    const inAmt = curAmt, from = s.from, to = s.to, fee = s.fee;
+    const build = s.proto==='v2'
+      ? (bps => SEL.swapExactTokensForTokens + padU(inAmt)+padU(q*(10000n-BigInt(bps))/10000n)+padU(0xa0)+padA(account)+padU(deadline)+padU(2)+padA(from)+padA(to))
+      : (bps => SEL.exactInputSingle + padA(from)+padA(to)+padU(fee)+padA(account)+padU(inAmt)+padU(q*(10000n-BigInt(bps))/10000n)+padU(0));
+    st.textContent='Checking swap '+(i+1)+'/'+conv.steps.length+'\u2026';
+    const data = await preflightMins(router, build);
+    st.textContent='Swap '+(i+1)+'/'+conv.steps.length+' in your wallet\u2026';
+    const before = toBig(await ethCall(to, SEL.balanceOf+padA(account)));
+    await sendTx(router, data);
+    curAmt = toBig(await ethCall(to, SEL.balanceOf+padA(account))) - before;
+    if(curAmt<=0n) throw new Error('swap output not detected');
+    cur = to;
+  }
+  return curAmt;
 }
 // exact-in v3 swap output within the active tick, INCLUDING size impact — not spot price.
 // Assumes constant liquidity across the traversed range, which is exact when the pool's
@@ -1120,23 +1150,6 @@ async function amountsOut(amtIn, path){
     const n = Number(BigInt('0x'+dd.slice(64,128)));
     return BigInt('0x'+dd.slice(128+(n-1)*64, 128+n*64));
   }catch(e){ return null; }
-}
-// best route from an external token into one of the pool's sides:
-// try direct [X→t] and hop [X→WETH→t] for both sides, keep the highest output
-async function bestRouteIn(x, amt){
-  const t0=zapPool.token0, t1=zapPool.token1;
-  const cands = [];
-  for(const t of [t0,t1]){
-    cands.push({path:[x.addr,t.addr], target:t});
-    if(CANON_WETH && x.addr!==CANON_WETH && t.addr.toLowerCase()!==CANON_WETH)
-      cands.push({path:[x.addr,CANON_WETH,t.addr], target:t});
-  }
-  let best=null;
-  for(const c of cands){
-    const out = await amountsOut(amt, c.path);
-    if(out && out>0n && (!best || out>best.out)) best={...c, out};
-  }
-  return best;
 }
 function optimalSwapIn(reserveIn, amountIn){
   // classic v2 0.3%-fee single-sided supply optimum
@@ -1165,15 +1178,15 @@ async function quoteV3(){
   const {sqrtP, L} = await v3State();
   if(!isPoolToken((t.addr||'').toLowerCase())){
     $('qSwap').textContent='finding route for $'+t.sym+'…';
-    const route = await findV3Route((t.addr||'').toLowerCase(), amt, zapPool);
-    if(!route){
-      $('qSwap').textContent='no v3 route found for $'+t.sym+' — no pool connects it to this pair yet';
+    const conv = await bestConvert((t.addr||'').toLowerCase(), amt, zapPool);
+    if(!conv){
+      $('qSwap').textContent='no route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet';
       $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return;
     }
-    routeTxt='$'+(t.native?'ETH':t.sym)+' → '+route.desc+' ('+route.hops.length+'-hop) → ';
-    amt = route.out;                       // continue the split with the converted amount
-    zeroForOne = route.side===0;
-    kept = route.side===0?t0:t1; other = route.side===0?t1:t0;
+    routeTxt='$'+(t.native?'ETH':t.sym)+' '+conv.desc+' → ';
+    amt = conv.out;                        // continue the split with the converted amount
+    zeroForOne = conv.side===0;
+    kept = conv.side===0?t0:t1; other = conv.side===0?t1:t0;
   }else{
     zeroForOne = (t.addr||'').toLowerCase()===t0.addr.toLowerCase();
     kept = zeroForOne?t0:t1; other = zeroForOne?t1:t0;
@@ -1215,23 +1228,21 @@ async function updateQuote(){
         $('qSwap').textContent='$'+t.sym+' → '+(CANON_WETH?'WETH → ':'')+'pool (route quote pending router config)';
         $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return;
       }
-      const route = await bestRouteIn(extToken, amt);
-      if(!route){ $('qSwap').textContent='no route found for $'+t.sym; $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return; }
-      const tt = route.target;
+      const conv = await bestConvert((extToken.addr||'').toLowerCase(), amt, zapPool);
+      if(!conv){ $('qSwap').textContent='no route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet'; $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return; }
+      const tt = conv.T;
       const rIn2 = tt.addr.toLowerCase()===zapPool.token0.addr.toLowerCase()?r0:r1;
       const rOut2 = tt.addr.toLowerCase()===zapPool.token0.addr.toLowerCase()?r1:r0;
       const oo = tt.addr.toLowerCase()===zapPool.token0.addr.toLowerCase()?zapPool.token1:zapPool.token0;
-      const s2 = optimalSwapIn(rIn2, route.out);
+      const s2 = optimalSwapIn(rIn2, conv.out);
       const out2 = (s2*997n*rOut2)/(rIn2*1000n + s2*997n);
-      $('qSwap').textContent = fmtUnits(amt,t.dec)+' $'+t.sym+' → ~'+fmtUnits(route.out,tt.dec)+' $'+tt.sym+' ('+route.path.length+'-hop)';
-      $('qDep').textContent = '~'+fmtUnits(route.out-s2,tt.dec)+' $'+tt.sym+' + ~'+fmtUnits(out2,oo.dec)+' $'+oo.sym;
+      $('qSwap').textContent = fmtUnits(amt,t.dec)+' $'+t.sym+' '+conv.desc+' ~'+fmtUnits(conv.out,tt.dec)+' $'+tt.sym;
+      $('qDep').textContent = '~'+fmtUnits(conv.out-s2,tt.dec)+' $'+tt.sym+' + ~'+fmtUnits(out2,oo.dec)+' $'+oo.sym;
       const impact = Number(s2*100000n/(rIn2+s2))/1000;
       $('qImpact').textContent = impact.toFixed(2)+'% (in-pool leg)'+(impact>2?' ⚠ high':'');
-      zapPool._route = route;
       $('zapBtn').disabled = !(ROUTER_V2 && account && zapPool._zappable);
       return;
     }
-    zapPool._route = null;
     const rIn = zapSide===0?r0:r1, rOut = zapSide===0?r1:r0;
     const s = optimalSwapIn(rIn, amt);
     const out = (s*997n*rOut)/(rIn*1000n + s*997n);
@@ -1311,27 +1322,11 @@ async function execZapV3(st){
   // ANY token in: route it into a pool side first, then split inside the pool as usual
   if(!isPoolToken((t.addr||'').toLowerCase())){
     st.textContent='Finding route for $'+t.sym+'…';
-    const route = await findV3Route((t.addr||'').toLowerCase(), amt, zapPool);
-    if(!route){ st.textContent='No v3 route found for $'+t.sym+' — no pool connects it to this pair yet.'; return; }
-    const al = toBig(await ethCall(t.addr, SEL.allowance+padA(account)+padA(V3_ROUTER)));
-    if(al < amt){ st.textContent='Approve $'+t.sym+' for the router in your wallet…'; await sendTx(t.addr, SEL.approve+padA(V3_ROUTER)+padU(amt)); }
-    const single = route.hops.length===1;
-    const from = t;
-    const build = bps => {
-      const mo = route.out*(10000n-BigInt(bps))/10000n;
-      return single
-        ? SEL.exactInputSingle + padA(from.addr)+padA(route.T.addr)+padU(route.hops[0][1])+padA(account)+padU(amt)+padU(mo)+padU(0)
-        : encodeExactInput(route.path, account, amt, mo);
-    };
-    st.textContent='Checking the route…';
-    const data = await preflightMins(V3_ROUTER, build);
-    st.textContent='Routing $'+t.sym+' → $'+route.T.sym+' in your wallet…';
-    const before = toBig(await ethCall(route.T.addr, SEL.balanceOf+padA(account)));
-    const hr = await sendTx(V3_ROUTER, data);
-    const got = toBig(await ethCall(route.T.addr, SEL.balanceOf+padA(account))) - before;
-    if(got<=0n) throw new Error('route output not detected');
-    st.innerHTML='Routed '+txLink(hr)+' — continuing zap…';
-    t = route.T; amt = got;
+    const conv = await bestConvert((t.addr||'').toLowerCase(), amt, zapPool);
+    if(!conv){ st.textContent='No route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet.'; return; }
+    amt = await runConvert(conv, amt, st);
+    st.textContent='Routed ✓ — continuing zap…';
+    t = conv.T;
   }
   const t0=zapPool.token0, t1=zapPool.token1;
   const zeroForOne = t.addr.toLowerCase()===t0.addr.toLowerCase();
@@ -1409,28 +1404,15 @@ $('zapBtn').addEventListener('click', async ()=>{
         st.textContent='Wrap ETH → WETH in your wallet…';
         await sendTx(CANON_WETH, SEL.deposit, amt);
       }
-      const route = zapPool._route || await bestRouteIn(extToken, amt);
-      if(!route){ st.textContent='No route found for $'+t.sym+'.'; return; }
-      const allowX = toBig(await ethCall(t.addr, SEL.allowance+padA(account)+padA(ROUTER_V2)));
-      if(allowX < amt){
-        st.textContent='Approve $'+t.sym+' in your wallet…';
-        await sendTx(t.addr, SEL.approve+padA(ROUTER_V2)+padU(amt));
-      }
-      const minR = route.out*(10000n-BigInt(slipBps))/10000n;
-      st.textContent='Routing $'+t.sym+' → $'+route.target.sym+' in your wallet…';
-      const before = toBig(await ethCall(route.target.addr, SEL.balanceOf+padA(account)));
-      const rData = SEL.swapExactTokensForTokens
-        + padU(amt) + padU(minR) + padU(0xa0) + padA(account) + padU(deadline)
-        + padU(route.path.length) + route.path.map(padA).join('');
-      const hr = await sendTx(ROUTER_V2, rData);
-      const gotR = toBig(await ethCall(route.target.addr, SEL.balanceOf+padA(account))) - before;
-      if(gotR<=0n) throw new Error('route output not detected');
-      st.innerHTML = 'Routed '+txLink(hr)+' — continuing zap…';
+      st.textContent='Finding route for $'+t.sym+'…';
+      const conv = await bestConvert((t.addr||'').toLowerCase(), amt, zapPool);
+      if(!conv){ st.textContent='No route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet.'; return; }
+      amt = await runConvert(conv, amt, st);
+      st.textContent='Routed ✓ — continuing zap…';
       // hand over to the standard in-pool flow using what we now hold
-      t = route.target;
+      t = conv.T;
       zapSide = t.addr.toLowerCase()===zapPool.token0.addr.toLowerCase() ? 0 : 1;
       o = outputToken();
-      amt = gotR;
     }
 
     // 1. approve (exact amount)
