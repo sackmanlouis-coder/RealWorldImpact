@@ -421,7 +421,7 @@ function fmtUnits(x, dec, digits=4){
   return whole.toLocaleString('en-US') + (f?'.'+f:'');
 }
 function parseUnits(s, dec){
-  s = String(s).trim(); if(!s || !/^\d*\.?\d*$/.test(s)) return null;
+  s = String(s).replace(/[,\s_]/g,''); if(!s || !/^\d*\.?\d*$/.test(s)) return null;
   const [w='0', f=''] = s.split('.');
   const frac = (f + '0'.repeat(dec)).slice(0,dec);
   try{ return BigInt(w||'0')*10n**BigInt(dec) + BigInt(frac||'0'); }catch(e){ return null; }
@@ -810,6 +810,7 @@ function applyMode(){
 }
 
 function openZap(p, isV3plus){
+  if(zapBusy) return; // never mutate zap state under an in-flight execution
   zapPool = p; zapPool._v3 = !!isV3plus;
   const ds = p.ds||{};
   const sym0 = (p.token0&&p.token0.sym)||(ds.baseToken&&ds.baseToken.symbol)||'token0';
@@ -1229,7 +1230,22 @@ async function updateQuote(){
         $('qSwap').textContent='$'+t.sym+' → '+(CANON_WETH?'WETH → ':'')+'pool (route quote pending router config)';
         $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return;
       }
-      const conv = await bestConvert((extToken.addr||'').toLowerCase(), amt, zapPool);
+      const xq = (extToken.addr||'').toLowerCase();
+      if(isPoolToken(xq)){
+        // already a pool side — quote it as a plain in-pool zap on that side
+        const side = xq===zapPool.token0.addr.toLowerCase()?0:1;
+        const rInS = side===0?r0:r1, rOutS = side===0?r1:r0;
+        const kk = side===0?zapPool.token0:zapPool.token1, oo2 = side===0?zapPool.token1:zapPool.token0;
+        const sS = optimalSwapIn(rInS, amt);
+        const outS = (sS*997n*rOutS)/(rInS*1000n + sS*997n);
+        $('qSwap').textContent = fmtUnits(sS,kk.dec)+' $'+(extToken.native?'ETH':kk.sym)+' → ~'+fmtUnits(outS,oo2.dec)+' $'+oo2.sym+(extToken.native?' (wrap first)':'');
+        $('qDep').textContent = '~'+fmtUnits(amt-sS,kk.dec)+' $'+kk.sym+' + ~'+fmtUnits(outS,oo2.dec)+' $'+oo2.sym;
+        const impS = Number(sS*100000n/(rInS+sS))/1000;
+        $('qImpact').textContent = impS.toFixed(2)+'%'+(impS>2?' ⚠ high':'');
+        $('zapBtn').disabled = !(ROUTER_V2 && account && zapPool._zappable);
+        return;
+      }
+      const conv = await bestConvert(xq, amt, zapPool);
       if(!conv){ $('qSwap').textContent='no route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet'; $('qDep').textContent='—'; $('qImpact').textContent='—'; $('zapBtn').disabled=true; return; }
       const tt = conv.T;
       const rIn2 = tt.addr.toLowerCase()===zapPool.token0.addr.toLowerCase()?r0:r1;
@@ -1351,6 +1367,8 @@ async function execZapV3(st){
   let amt = parseUnits($('amtIn').value, t.dec);
   if(!amt || amt<=0n){ st.textContent='Enter an amount.'; return; }
   if(t._bal!=null && amt>t._bal){ st.textContent='Amount exceeds balance.'; return; }
+  if(amt<1000n){ st.textContent='Amount too small to zap.'; return; }
+  if(t.native && nativeBal!=null && amt > nativeBal - 200000000000000n){ st.textContent='Leave a little ETH for gas — the MAX button does this automatically.'; return; }
   const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
   if(t.native){
     st.textContent='Wrap ETH → WETH in your wallet…';
@@ -1370,6 +1388,7 @@ async function execZapV3(st){
   const zeroForOne = t.addr.toLowerCase()===t0.addr.toLowerCase();
   const tIn = zeroForOne?t0:t1, tOut = zeroForOne?t1:t0;
   const {sqrtP, L} = await v3State();
+  if(L<=0n){ st.textContent='Pool has no active liquidity to swap against.'; return; }
   const s = amt/2n;
   const minOut = v3ExactOut(s, zeroForOne, sqrtP, L, zapPool.fee)*(10000n-BigInt(slipBps))/10000n;
   // 1. approve + swap half
@@ -1441,8 +1460,10 @@ async function execPairV3(st){
   refreshBalance(); loadPositions();
 }
 
+let zapBusy = false; // one flow at a time — no double-clicks, no mid-flight state changes
 $('zapBtn').addEventListener('click', async ()=>{
-  if(!zapPool || !account) return;
+  if(!zapPool || !account || zapBusy) return;
+  zapBusy = true; $('zapBtn').disabled = true;
   const st = $('zapStatus');
   try{
     if(!(await ensureChain())){ st.textContent='Switch to Robinhood Chain first.'; return; }
@@ -1453,6 +1474,8 @@ $('zapBtn').addEventListener('click', async ()=>{
     let amt = parseUnits($('amtIn').value, t.dec);
     if(!amt || amt<=0n){ st.textContent='Enter an amount.'; return; }
     if(t._bal!=null && amt>t._bal){ st.textContent='Amount exceeds balance.'; return; }
+    if(amt<1000n){ st.textContent='Amount too small to zap.'; return; }
+    if(t.native && nativeBal!=null && amt > nativeBal - 200000000000000n){ st.textContent='Leave a little ETH for gas — the MAX button does this automatically.'; return; }
     const deadline = BigInt(Math.floor(Date.now()/1000)+1200);
 
     // External token: route it into a pool side first, then continue as a normal zap
@@ -1461,15 +1484,23 @@ $('zapBtn').addEventListener('click', async ()=>{
         st.textContent='Wrap ETH → WETH in your wallet…';
         await sendTx(CANON_WETH, SEL.deposit, amt);
       }
-      st.textContent='Finding route for $'+t.sym+'…';
-      const conv = await bestConvert((t.addr||'').toLowerCase(), amt, zapPool);
-      if(!conv){ st.textContent='No route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet.'; return; }
-      amt = await runConvert(conv, amt, st);
-      st.textContent='Routed ✓ — continuing zap…';
-      // hand over to the standard in-pool flow using what we now hold
-      t = conv.T;
-      zapSide = t.addr.toLowerCase()===zapPool.token0.addr.toLowerCase() ? 0 : 1;
-      o = outputToken();
+      const xAddr = (t.addr||'').toLowerCase();
+      if(isPoolToken(xAddr)){
+        // already a pool side (e.g. $ETH/$WETH when WETH is in the pair) — no conversion needed
+        zapSide = xAddr===zapPool.token0.addr.toLowerCase() ? 0 : 1;
+        t = zapSide===0?zapPool.token0:zapPool.token1;
+        o = outputToken();
+      }else{
+        st.textContent='Finding route for $'+t.sym+'…';
+        const conv = await bestConvert(xAddr, amt, zapPool);
+        if(!conv){ st.textContent='No route found for $'+t.sym+' — no v2 or v3 pool connects it to this pair yet.'; return; }
+        amt = await runConvert(conv, amt, st);
+        st.textContent='Routed ✓ — continuing zap…';
+        // hand over to the standard in-pool flow using what we now hold
+        t = conv.T;
+        zapSide = t.addr.toLowerCase()===zapPool.token0.addr.toLowerCase() ? 0 : 1;
+        o = outputToken();
+      }
     }
 
     // 1. approve (exact amount)
@@ -1520,6 +1551,8 @@ $('zapBtn').addEventListener('click', async ()=>{
     refreshBalance(); loadPositions();
   }catch(e){
     st.textContent = 'Zap stopped: '+(e && e.message ? e.message : 'unknown error')+' — nothing further was sent.';
+  }finally{
+    zapBusy = false; $('zapBtn').disabled = false;
   }
 });
 
@@ -1602,6 +1635,7 @@ async function loadPositions(){
 // ==========================================================================
 let unzap = null, uzPct = 100;
 function openUnzap(o){
+  if(zapBusy) return;
   unzap = o; uzPct = 100;
   const p = o.pool, t0 = p.token0, t1 = p.token1;
   $('uzTitle').textContent = 'Unzap $'+t0.sym+' / $'+t1.sym+(o.kind==='v3' ? ' \u00b7 v3 NFT #'+o.id : '')+' \u2014 both tokens return to your wallet';
@@ -1623,7 +1657,8 @@ $('posTable').addEventListener('click', e=>{
   else openUnzap({kind:'v2', pool:p});
 });
 $('uzBtn').addEventListener('click', async ()=>{
-  if(!unzap || !account) return;
+  if(!unzap || !account || zapBusy) return;
+  zapBusy = true; $('uzBtn').disabled = true;
   const st = $('uzStatus'); const p = unzap.pool;
   try{
     if(!(await ensureChain())){ st.textContent='Switch to Robinhood Chain first.'; return; }
@@ -1681,6 +1716,8 @@ $('uzBtn').addEventListener('click', async ()=>{
     refreshBalance(); loadPositions(); loadWalletTokens();
   }catch(err){
     st.textContent='Unzap stopped: '+(err&&err.message||'unknown')+' \u2014 nothing further was sent.';
+  }finally{
+    zapBusy = false; $('uzBtn').disabled = false;
   }
 });
 
