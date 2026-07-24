@@ -1016,14 +1016,15 @@ function rangeAmounts(L, S, sqrtLo, sqrtHi){
 }
 // preflight ladder for min-guarded withdrawals: user slippage → diagnose with mins=0 →
 // one widened retry. Distinguishes "mins too tight" from "pool/position rejects this".
-async function preflightMins(to, build){
+async function preflightMins(to, build, label){
+  label = label || 'transaction';
   try{ await preflight({from:account, to, data:build(slipBps)}); return build(slipBps); }
   catch(e1){
     try{ await preflight({from:account, to, data:build(10000)}); }
-    catch(e2){ throw new Error('the pool/position rejects this withdrawal — '+(e2&&e2.message||'unknown')); }
+    catch(e2){ throw new Error('the pool rejects this '+label+' — '+(e2&&e2.message||'unknown')); }
     const wide = Math.min(slipBps*3, 500);
     try{ await preflight({from:account, to, data:build(wide)}); return build(wide); }
-    catch(e3){ throw new Error('price is moving faster than your slippage allows — try again or raise slippage'); }
+    catch(e3){ throw new Error('price is moving faster than your slippage allows on the '+label+' — try again or raise slippage'); }
   }
 }
 // ==========================================================================
@@ -1117,7 +1118,7 @@ async function runConvert(conv, amt, st){
       ? (bps => SEL.swapExactTokensForTokens + padU(inAmt)+padU(q*(10000n-BigInt(bps))/10000n)+padU(0xa0)+padA(account)+padU(deadline)+padU(2)+padA(from)+padA(to))
       : (bps => SEL.exactInputSingle + padA(from)+padA(to)+padU(fee)+padA(account)+padU(inAmt)+padU(q*(10000n-BigInt(bps))/10000n)+padU(0));
     st.textContent='Checking swap '+(i+1)+'/'+conv.steps.length+'\u2026';
-    const data = await preflightMins(router, build);
+    const data = await preflightMins(router, build, 'swap');
     st.textContent='Swap '+(i+1)+'/'+conv.steps.length+' in your wallet\u2026';
     const before = toBig(await ethCall(to, SEL.balanceOf+padA(account)));
     await sendTx(router, data);
@@ -1430,15 +1431,19 @@ async function execZapV3(st){
   const existing = await findMatchingPosition(t0, t1, zapPool.fee, lo, hi);
   const buildMint = bps => {
     const bpsN = BigInt(bps);
-    // derive the mint's own expected split from the live post-swap price (Uniswap ratio),
-    // clipped to our balances — this is what the NPM will actually see
-    const [rq0, rq1] = rangeAmounts(1n, Snow, sqrtLo, sqrtHi);
+    // At full range, the pool's exact amount ratio at price S is  a1/a0 = S²/Q96²  (Uniswap v3 math).
+    // Compute it in a way that survives BigInt division — a scaled probe like rangeAmounts(1, …)
+    // truncates one side to zero at realistic prices and forces a broken zero-amount mint.
+    // Instead: clip whichever side is binding, using cross-multiplication that never divides
+    // by an "almost-zero" quantity.
     let use0 = have0, use1 = have1;
-    if(rq0>0n && rq1>0n){
-      const cap1 = have0*rq1/rq0; // how much side1 is needed for our side0 amount
-      if(cap1 < use1) use1 = cap1; else use0 = have1*rq0/rq1;
-    }else if(rq0===0n){ use0 = 0n; }
-    else{ use1 = 0n; }
+    if(Snow>0n && have0>0n && have1>0n){
+      // required side1 for our have0 :  need1 = have0 * S² / Q96²
+      const need1 = have0 * Snow / Q96 * Snow / Q96;
+      if(need1 <= have1) use1 = need1;                                  // side0 binds
+      else                use0 = have1 * Q96 / Snow * Q96 / Snow;       // side1 binds
+    }
+    if(use0<=0n || use1<=0n){ throw new Error('post-swap balances too imbalanced to mint — try a larger amount'); }
     const m0 = use0*(10000n-bpsN)/10000n, m1 = use1*(10000n-bpsN)/10000n;
     return existing
       ? SEL.increaseLiquidity + padU(existing.id) + padU(use0) + padU(use1) + padU(m0) + padU(m1) + padU(deadline)
@@ -1446,7 +1451,7 @@ async function execZapV3(st){
         + padU(use0) + padU(use1) + padU(m0) + padU(m1) + padA(account) + padU(deadline);
   };
   st.textContent='Checking the mint…';
-  const mintData = await preflightMins(V3_NPM, buildMint);
+  const mintData = await preflightMins(V3_NPM, buildMint, 'mint');
   let h2;
   if(existing){
     st.textContent='Add to position #'+existing.id+' in your wallet…';
@@ -1478,14 +1483,15 @@ async function execPairV3(st){
   const existing = await findMatchingPosition(t0, t1, zapPool.fee, lo, hi);
   const buildPair = bps => {
     const bpsN = BigInt(bps);
-    // clip typed amounts to the live pool ratio — user can't overshoot one side
-    const [rq0, rq1] = rangeAmounts(1n, Snow, sqrtLo, sqrtHi);
+    // clip typed amounts to the live pool ratio using the exact full-range formula (a1 = a0*S²/Q96²).
+    // Cross-multiplied so BigInt division never truncates a needed value to zero.
     let use0 = a, use1 = b;
-    if(rq0>0n && rq1>0n){
-      const cap1 = a*rq1/rq0;
-      if(cap1 < use1) use1 = cap1; else use0 = b*rq0/rq1;
-    }else if(rq0===0n){ use0 = 0n; }
-    else{ use1 = 0n; }
+    if(Snow>0n && a>0n && b>0n){
+      const need1 = a * Snow / Q96 * Snow / Q96;
+      if(need1 <= b) use1 = need1;
+      else            use0 = b * Q96 / Snow * Q96 / Snow;
+    }
+    if(use0<=0n || use1<=0n){ throw new Error('amounts too imbalanced for this pool ratio'); }
     const mA = use0*(10000n-bpsN)/10000n, mB = use1*(10000n-bpsN)/10000n;
     return existing
       ? SEL.increaseLiquidity + padU(existing.id) + padU(use0) + padU(use1) + padU(mA) + padU(mB) + padU(deadline)
@@ -1493,7 +1499,7 @@ async function execPairV3(st){
         + padU(use0) + padU(use1) + padU(mA) + padU(mB) + padA(account) + padU(deadline);
   };
   st.textContent='Checking the mint…';
-  const mintData = await preflightMins(V3_NPM, buildPair);
+  const mintData = await preflightMins(V3_NPM, buildPair, 'deposit');
   let h;
   if(existing){
     st.textContent='Add to position #'+existing.id+' in your wallet…';
@@ -1727,7 +1733,7 @@ $('uzBtn').addEventListener('click', async ()=>{
         + padU(liq)+padU(r0*liq/sup*(10000n-BigInt(bps))/10000n)+padU(r1*liq/sup*(10000n-BigInt(bps))/10000n)
         + padA(account)+padU(deadline);
       st.textContent='Checking the withdrawal…';
-      const data = await preflightMins(ROUTER_V2, build);
+      const data = await preflightMins(ROUTER_V2, build, 'withdrawal');
       st.textContent='Remove liquidity in your wallet…';
       hOut = await sendTx(ROUTER_V2, data);
     }else{
@@ -1752,7 +1758,7 @@ $('uzBtn').addEventListener('click', async ()=>{
         SEL.collect + padU(unzap.id)+padA(account)+padU(MAX128)+padU(MAX128)
       ]);
       st.textContent='Checking the withdrawal…';
-      const data = await preflightMins(V3_NPM, build);
+      const data = await preflightMins(V3_NPM, build, 'withdrawal');
       st.textContent='Withdraw + collect (one transaction) in your wallet…';
       hOut = await sendTx(V3_NPM, data);
     }
