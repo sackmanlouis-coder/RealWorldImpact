@@ -333,14 +333,24 @@ function decStr(sel){ // decode string return (symbol)
   }catch(e){ return '?' }
 }
 let rpcI = 0, rpcId = 1;
+let walletOnChain = false; // true only while the connected wallet reports Robinhood Chain
 async function rpc(method, params){
+  // Prefer the connected wallet's own node — it can't be CORS-blocked and is the
+  // same connection the user trusts for transactions. Public RPCs are the fallback.
+  if(wallet && walletOnChain){
+    try{
+      const res = await wallet.request({method, params});
+      if(res !== undefined && res !== null) return res;
+    }catch(e){/* fall through to public RPCs */}
+  }
   for(let k=0;k<RPCS.length;k++){
     const url = RPCS[(rpcI+k)%RPCS.length];
     try{
       const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({jsonrpc:'2.0',id:rpcId++,method,params})});
       const j = await r.json();
-      if(j && j.result !== undefined){ rpcI=(rpcI+k)%RPCS.length; return j.result; }
+      // result:null is a failure for our read methods, not a zero — never let it become one
+      if(j && j.result !== undefined && j.result !== null){ rpcI=(rpcI+k)%RPCS.length; return j.result; }
     }catch(e){/* try next */}
   }
   throw new Error('all RPCs failed');
@@ -407,7 +417,9 @@ async function updateChainChip(){
   if(!wallet) return;
   try{
     const cid = await wallet.request({method:'eth_chainId'});
-    $('chainChip').innerHTML = cid===CHAIN.idHex ? '<span class="chip">Robinhood Chain</span>' : '<span class="chip warn">Wrong network</span>';
+    walletOnChain = cid===CHAIN.idHex;
+    if(walletOnChain) retryOnchain();
+    $('chainChip').innerHTML = walletOnChain ? '<span class="chip">Robinhood Chain</span>' : '<span class="chip warn">Wrong network</span>';
   }catch(e){}
 }
 // silent session resume — if the wallet already authorized this site, restore without a prompt
@@ -420,11 +432,20 @@ async function updateChainChip(){
     if(accts && accts[0]) connect(); // already authorized — resolves with no prompt
   }catch(e){}
 })();
+// boot-time RPC health probe — if the public RPCs are unreachable from this browser,
+// say so instead of quietly showing dashes and zeros
+(async function rpcHealth(){
+  try{ await rpc('eth_blockNumber',[]); }
+  catch(e){
+    if(!walletOnChain) $('chainChip').innerHTML = '<span class="chip warn">Public RPCs unreachable — connect a wallet on Robinhood Chain for live data</span>';
+  }
+})();
 async function ensureChain(){
   if(!wallet) return false;
   try{
     const cid = await wallet.request({method:'eth_chainId'});
-    if(cid === CHAIN.idHex){ $('chainChip').innerHTML = '<span class="chip">Robinhood Chain</span>'; return true; }
+    if(cid === CHAIN.idHex){ walletOnChain = true; $('chainChip').innerHTML = '<span class="chip">Robinhood Chain</span>'; retryOnchain(); return true; }
+    walletOnChain = false;
     $('chainChip').innerHTML = '<span class="chip warn">Wrong network</span>';
     try{
       await wallet.request({method:'wallet_switchEthereumChain', params:[{chainId:CHAIN.idHex}]});
@@ -435,20 +456,30 @@ async function ensureChain(){
     }
     const cid2 = await wallet.request({method:'eth_chainId'});
     const ok = cid2 === CHAIN.idHex;
+    walletOnChain = ok;
     $('chainChip').innerHTML = ok ? '<span class="chip">Robinhood Chain</span>' : '<span class="chip warn">Wrong network</span>';
+    if(ok) retryOnchain();
     return ok;
   }catch(e){ return false; }
+}
+// If the public RPCs were down at boot, pool metadata and WETH derivation stalled —
+// re-run them now that the wallet's own node can serve the reads.
+function retryOnchain(){
+  if(!CANON_WETH) deriveWeth();
+  pools.forEach(p=>{ if(!p.token0) loadPool(p.pair, p.note, p.v2); });
+  refreshBalance(); loadPositions();
 }
 $('connectBtn').addEventListener('click', connect);
 
 // derive canonical WETH from the trusted main pool
-(async function deriveWeth(){
+async function deriveWeth(){
   try{
     const [t0,t1] = await Promise.all([ethCall(MAIN_POOL,SEL.token0), ethCall(MAIN_POOL,SEL.token1)]);
     const a0='0x'+t0.slice(-40), a1='0x'+t1.slice(-40);
     CANON_WETH = (a0.toLowerCase()===RWI_ADDR) ? a1.toLowerCase() : a0.toLowerCase();
   }catch(e){/* multi-hop routes unavailable until this resolves */}
-})();
+}
+deriveWeth();
 
 // wallet token discovery via Blockscout — any ERC-20 with balance becomes a zap source
 let walletTokens = [];
@@ -731,8 +762,14 @@ async function refreshBalance(){
   if(!zapPool || !account){ $('balTxt').textContent='—'; $('balTxtB').textContent='—'; return; }
   const a = mode==='pair' ? zapPool.token0 : inputToken();
   const b = mode==='pair' ? zapPool.token1 : null;
-  if(a){ try{ a._bal = toBig(await ethCall(a.addr, SEL.balanceOf+padA(account))); $('balTxt').textContent=fmtUnits(a._bal,a.dec); }catch(e){ $('balTxt').textContent='—'; } }
-  if(b){ try{ b._bal = toBig(await ethCall(b.addr, SEL.balanceOf+padA(account))); $('balTxtB').textContent=fmtUnits(b._bal,b.dec); }catch(e){ $('balTxtB').textContent='—'; } }
+  const restBal = t => { // Blockscout-discovered balance as a fallback when RPC reads fail
+    const w = t && walletTokens.find(x=>x.addr===(t.addr||'').toLowerCase());
+    return w ? w._bal : null;
+  };
+  if(a){ try{ a._bal = toBig(await ethCall(a.addr, SEL.balanceOf+padA(account))); $('balTxt').textContent=fmtUnits(a._bal,a.dec); }
+    catch(e){ const w=restBal(a); if(w!=null){ a._bal=w; $('balTxt').textContent=fmtUnits(w,a.dec); } else $('balTxt').textContent='—'; } }
+  if(b){ try{ b._bal = toBig(await ethCall(b.addr, SEL.balanceOf+padA(account))); $('balTxtB').textContent=fmtUnits(b._bal,b.dec); }
+    catch(e){ const w=restBal(b); if(w!=null){ b._bal=w; $('balTxtB').textContent=fmtUnits(w,b.dec); } else $('balTxtB').textContent='—'; } }
 }
 $('maxBtn').addEventListener('click',()=>{
   const t = mode==='pair' ? (zapPool&&zapPool.token0) : inputToken();
